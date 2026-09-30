@@ -1,0 +1,302 @@
+C51 COMPILER V9.60.7.0   MUSIC                                                             09/30/2026 09:28:04 PAGE 1   
+
+
+C51 COMPILER V9.60.7.0, COMPILATION OF MODULE MUSIC
+OBJECT MODULE PLACED IN .\Objects\music.obj
+COMPILER INVOKED BY: D:\Keil5\C51\BIN\C51.EXE music.c OPTIMIZE(8,SPEED) BROWSE DEBUG OBJECTEXTEND PRINT(.\Listings\music
+                    -.lst) TABS(2) OBJECT(.\Objects\music.obj)
+
+line level    source
+
+   1          /* ===========================================================================
+   2             Buzzer music player engine  -  STC89C52RC, 11.0592 MHz
+   3          
+   4             Buzzer : P2.5 -> ULN2003D IN5, OUT5 (pin 12) -> net BEEP -> BZ1.
+   5                      The ULN2003 inverts, so P2.5 HIGH sounds the buzzer.
+   6          
+   7             !! P2.5 is also the LCD1602 RW line.  The LCD is only ever written to
+   8                while the buzzer is silent (see Music_BusFree) - that is safe because
+   9                the LCD ignores RW while E is low, and the buzzer pin is free then.
+  10          
+  11             Timer 0 makes the square wave: 16 bit, reloaded from TONE[] inside its
+  12             interrupt, toggling the buzzer pin once per half period.
+  13             Timer 1 gives a 1 ms tick that times the notes and the display blink.
+  14          
+  15             The player is a small state machine.  Music_Run() is called from the main
+  16             loop and returns after every note phase, so the keys stay responsive
+  17             while the music plays.
+  18             =========================================================================== */
+  19          
+  20          #include <REGX52.H>
+  21          #include "music.h"
+  22          #include "songs.h"
+  23          
+  24          sbit BEEP = P2^5;
+  25          
+  26          static unsigned char code *song;        /* the tune being played           */
+  27          static unsigned char  cur_song;         /* its number                      */
+  28          static unsigned int   idx;              /* position in the note table      */
+  29          static unsigned int   pos;              /* units played so far             */
+  30          static unsigned char  state;            /* MUS_STOP / MUS_PLAY / MUS_PAUSE */
+  31          static unsigned char  phase;            /* 0 = sounding, 1 = gap           */
+  32          static unsigned char  unit_ms;          /* ms per unit for this song       */
+  33          static unsigned int   gap_ms;           /* length of the gap after a note  */
+  34          static unsigned int   sound_ms;         /* length of the note itself       */
+  35          static unsigned int   half_period;      /* Timer 0 reload                  */
+  36          static unsigned int   ms_count;         /* note phase countdown            */
+  37          
+  38          unsigned int g_ui_ms;                   /* UI countdown, 1 ms per tick     */
+  39          
+  40          
+  41          /* ---- Timer 0: one interrupt per half period -> square wave -------------- */
+  42          void Timer0_ISR(void) interrupt 1
+  43          {
+  44   1          TH0 = (unsigned char)(half_period >> 8);
+  45   1          TL0 = (unsigned char)half_period;
+  46   1          BEEP = !BEEP;
+  47   1      }
+  48          
+  49          /* ---- Timer 1: 1 ms tick for the note lengths and the UI ---------------- */
+  50          void Timer1_ISR(void) interrupt 3
+  51          {
+  52   1          TH1 = 0xFC;             /* 65536 - 921 = 1 ms at 11.0592 MHz */
+  53   1          TL1 = 0x67;
+  54   1          if (ms_count != 0) ms_count--;
+C51 COMPILER V9.60.7.0   MUSIC                                                             09/30/2026 09:28:04 PAGE 2   
+
+  55   1          if (g_ui_ms  != 0) g_ui_ms--;
+  56   1      }
+  57          
+  58          
+  59          static void Tone_On(unsigned char note)
+  60          {
+  61   1          half_period = TONE[note];
+  62   1          TH0 = (unsigned char)(half_period >> 8);
+  63   1          TL0 = (unsigned char)half_period;
+  64   1          TR0 = 1;
+  65   1      }
+  66          
+  67          static void Tone_Off(void)
+  68          {
+  69   1          TR0  = 0;
+  70   1          BEEP = 0;
+  71   1      }
+  72          
+  73          
+  74          /*  Pick up the event at idx and start sounding it.                        */
+  75          static void Start_Event(void)
+  76          {
+  77   1          unsigned char note  = song[idx];
+  78   1          unsigned char units = song[idx + 1];
+  79   1          unsigned int  ms;
+  80   1      
+  81   1          pos += units;
+  82   1          idx += 2;
+  83   1      
+  84   1          ms = (unsigned int)units * unit_ms;
+  85   1      
+  86   1          if (note == N_REST)
+  87   1          {
+  88   2              /*  a rest is silent for its WHOLE length - getting this wrong is
+  89   2                  what makes a tune run fast and blur together                 */
+  90   2              Tone_Off();
+  91   2              phase    = 1;
+  92   2              sound_ms = 0;
+  93   2              gap_ms   = ms;
+  94   2              ms_count = ms;
+  95   2              return;
+  96   2          }
+  97   1      
+  98   1          /*  a note sounds for most of its length and leaves a short gap at the
+  99   1              end, so repeated notes stay separate.  That gap is also the only
+ 100   1              moment the LCD may be written to.                                */
+ 101   1          gap_ms = ms >> 4;
+ 102   1          if (gap_ms < 8)         gap_ms = 8;     /* room for a display update */
+ 103   1          if (gap_ms > (ms >> 1)) gap_ms = ms >> 1;
+ 104   1      
+ 105   1          Tone_On(note);
+ 106   1          sound_ms = ms - gap_ms;
+ 107   1          phase    = 0;
+ 108   1          ms_count = sound_ms;
+ 109   1      }
+ 110          
+ 111          
+ 112          void Music_Init(void)
+ 113          {
+ 114   1          TMOD = 0x11;                /* Timer 0 and Timer 1, both 16 bit */
+ 115   1      
+ 116   1          TR0  = 0;
+C51 COMPILER V9.60.7.0   MUSIC                                                             09/30/2026 09:28:04 PAGE 3   
+
+ 117   1          BEEP = 0;
+ 118   1      
+ 119   1          TH1  = 0xFC;                /* start the 1 ms tick */
+ 120   1          TL1  = 0x67;
+ 121   1          TR1  = 1;
+ 122   1      
+ 123   1          ms_count    = 0;
+ 124   1          g_ui_ms     = 0;
+ 125   1          half_period = TONE[24];     /* C5, a sane starting value */
+ 126   1      
+ 127   1          ET0 = 1;
+ 128   1          ET1 = 1;
+ 129   1          EA  = 1;
+ 130   1      
+ 131   1          Music_Load(0);
+ 132   1      }
+ 133          
+ 134          
+ 135          void Music_Load(unsigned char s)
+ 136          {
+ 137   1          if (s >= SONG_COUNT) s = 0;
+ 138   1      
+ 139   1          cur_song = s;
+ 140   1          song     = (s == 0) ? SONG0 : SONG1;
+ 141   1          unit_ms  = SONG_UNITMS[s];
+ 142   1      
+ 143   1          idx      = 0;
+ 144   1          pos      = 0;
+ 145   1          phase    = 0;
+ 146   1          ms_count = 0;
+ 147   1          state    = MUS_STOP;
+ 148   1          Tone_Off();
+ 149   1      }
+ 150          
+ 151          unsigned char Music_State(void)   { return state;    }
+ 152          unsigned int  Music_Pos(void)     { return pos;      }
+ 153          unsigned int  Music_Total(void)   { return SONG_UNITS[cur_song]; }
+ 154          unsigned char Music_UnitMs(void)  { return unit_ms;  }
+ 155          
+ 156          unsigned char code *Music_Name(unsigned char s)
+ 157          {
+ 158   1          return (s == 0) ? SONG_NAME0 : SONG_NAME1;
+ 159   1      }
+ 160          
+ 161          unsigned char Music_BusFree(void)
+ 162          {
+ 163   1          if (state != MUS_PLAY) return 1;        /* not playing: pin is free */
+ 164   1          return (unsigned char)(phase != 0);     /* silent part of a note    */
+ 165   1      }
+ 166          
+ 167          
+ 168          void Music_Start(void)
+ 169          {
+ 170   1          if (state == MUS_PLAY) return;
+ 171   1      
+ 172   1          if (state == MUS_STOP)
+ 173   1          {
+ 174   2              idx   = 0;                          /* restart from the beginning */
+ 175   2              pos   = 0;
+ 176   2              phase = 0;
+ 177   2          }
+ 178   1          state = MUS_PLAY;
+C51 COMPILER V9.60.7.0   MUSIC                                                             09/30/2026 09:28:04 PAGE 4   
+
+ 179   1      
+ 180   1          if (song[idx] == N_END)                 /* nothing to play */
+ 181   1          {
+ 182   2              state = MUS_STOP;
+ 183   2              return;
+ 184   2          }
+ 185   1          Start_Event();
+ 186   1      }
+ 187          
+ 188          void Music_Pause(void)
+ 189          {
+ 190   1          if (state != MUS_PLAY) return;
+ 191   1          state = MUS_PAUSE;
+ 192   1          Tone_Off();
+ 193   1      }
+ 194          
+ 195          void Music_Resume(void)
+ 196          {
+ 197   1          if (state != MUS_PAUSE) return;
+ 198   1          state = MUS_PLAY;
+ 199   1      
+ 200   1          if (song[idx] == N_END)
+ 201   1          {
+ 202   2              state = MUS_STOP;
+ 203   2              return;
+ 204   2          }
+ 205   1          Start_Event();
+ 206   1      }
+ 207          
+ 208          void Music_Halt(void)
+ 209          {
+ 210   1          state    = MUS_STOP;
+ 211   1          ms_count = 0;
+ 212   1          Tone_Off();
+ 213   1      }
+ 214          
+ 215          
+ 216          void Music_Seek(int units)
+ 217          {
+ 218   1          int           target = (int)pos + units;
+ 219   1          unsigned int  i      = 0;
+ 220   1          unsigned int  acc    = 0;
+ 221   1          unsigned char resume = (unsigned char)(state == MUS_PLAY);
+ 222   1      
+ 223   1          if (target < 0) target = 0;
+ 224   1      
+ 225   1          while (acc < (unsigned int)target && song[i] != N_END)
+ 226   1          {
+ 227   2              acc += song[i + 1];
+ 228   2              i   += 2;
+ 229   2          }
+ 230   1      
+ 231   1          idx      = i;
+ 232   1          pos      = acc;
+ 233   1          ms_count = 0;
+ 234   1          phase    = 0;
+ 235   1          Tone_Off();
+ 236   1      
+ 237   1          if (song[idx] == N_END)                 /* seeked past the end */
+ 238   1          {
+ 239   2              state = MUS_STOP;
+ 240   2              return;
+C51 COMPILER V9.60.7.0   MUSIC                                                             09/30/2026 09:28:04 PAGE 5   
+
+ 241   2          }
+ 242   1          if (resume)
+ 243   1          {
+ 244   2              Start_Event();
+ 245   2          }
+ 246   1      }
+ 247          
+ 248          
+ 249          void Music_Run(void)
+ 250          {
+ 251   1          if (state != MUS_PLAY) return;
+ 252   1          if (ms_count != 0)     return;          /* still busy with this note */
+ 253   1      
+ 254   1          if (phase == 0)                         /* note finished -> the gap */
+ 255   1          {
+ 256   2              Tone_Off();
+ 257   2              phase    = 1;
+ 258   2              ms_count = gap_ms;
+ 259   2              return;
+ 260   2          }
+ 261   1      
+ 262   1          /* the gap is over, move on */
+ 263   1          if (song[idx] == N_END)
+ 264   1          {
+ 265   2              state = MUS_STOP;
+ 266   2              Tone_Off();
+ 267   2              return;
+ 268   2          }
+ 269   1          Start_Event();
+ 270   1      }
+
+
+MODULE INFORMATION:   STATIC OVERLAYABLE
+   CODE SIZE        =    738    ----
+   CONSTANT SIZE    =   3305    ----
+   XDATA SIZE       =   ----    ----
+   PDATA SIZE       =   ----    ----
+   DATA SIZE        =     20       4
+   IDATA SIZE       =   ----    ----
+   BIT SIZE         =   ----    ----
+END OF MODULE INFORMATION.
+
+
+C51 COMPILATION COMPLETE.  0 WARNING(S),  0 ERROR(S)

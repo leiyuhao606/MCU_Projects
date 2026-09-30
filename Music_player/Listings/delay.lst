@@ -1,0 +1,50 @@
+C51 COMPILER V9.60.7.0   DELAY                                                             09/30/2026 09:28:05 PAGE 1   
+
+
+C51 COMPILER V9.60.7.0, COMPILATION OF MODULE DELAY
+OBJECT MODULE PLACED IN .\Objects\delay.obj
+COMPILER INVOKED BY: D:\Keil5\C51\BIN\C51.EXE delay.c OPTIMIZE(8,SPEED) BROWSE DEBUG OBJECTEXTEND PRINT(.\Listings\delay
+                    -.lst) TABS(2) OBJECT(.\Objects\delay.obj)
+
+line level    source
+
+   1          #include <REGX52.H>
+   2          #include <intrins.h>
+   3          
+   4          /*  1 ms blocking delay, calibrated for an 11.0592 MHz crystal.
+   5              The schematic of the PuZhong-2/3/4 board shows an 11.0592 MHz crystal,
+   6              and this is the same code the teach_project test project uses.        */
+   7          void Delay1ms(void)
+   8          {
+   9   1          unsigned char data i, j;
+  10   1      
+  11   1          _nop_();
+  12   1          i = 2;
+  13   1          j = 199;
+  14   1          do
+  15   1          {
+  16   2              while (--j);
+  17   2          } while (--i);
+  18   1      }
+  19          
+  20          void Delay_ms(unsigned char ms)
+  21          {
+  22   1          while (ms--)
+  23   1          {
+  24   2              Delay1ms();
+  25   2          }
+  26   1      }
+
+
+MODULE INFORMATION:   STATIC OVERLAYABLE
+   CODE SIZE        =     24    ----
+   CONSTANT SIZE    =   ----    ----
+   XDATA SIZE       =   ----    ----
+   PDATA SIZE       =   ----    ----
+   DATA SIZE        =   ----    ----
+   IDATA SIZE       =   ----    ----
+   BIT SIZE         =   ----    ----
+END OF MODULE INFORMATION.
+
+
+C51 COMPILATION COMPLETE.  0 WARNING(S),  0 ERROR(S)

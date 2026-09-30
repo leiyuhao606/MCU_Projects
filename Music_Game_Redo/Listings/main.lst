@@ -1,0 +1,727 @@
+C51 COMPILER V9.60.7.0   MAIN                                                              09/30/2026 13:15:47 PAGE 1   
+
+
+C51 COMPILER V9.60.7.0, COMPILATION OF MODULE MAIN
+OBJECT MODULE PLACED IN main.OBJ
+COMPILER INVOKED BY: D:\Keil5\C51\BIN\C51.exe main.c
+
+line level    source
+
+   1          /*
+   2           * Music Game Redo - STC89C52RC + LCD1602
+   3           *
+   4           * The LCD1602 gives us four 4-pixel lanes: the upper and lower half of each
+   5           * character row.  Notes are 3 pixels wide by 4 pixels high and travel from
+   6           * the left edge to the centre pixel of character column 12 (x = 57).  The
+   7           * travel time is deliberately close to two seconds so a frame never skips a
+   8           * visible pixel.  A note
+   9           * is Perfect when its three columns include x = 57; it is Great only when a
+  10           * note column is immediately beside that line (x = 54 or x = 58).
+  11           *
+  12           * Lane/key wiring follows the board schematic's physical right-to-left
+  13           * requirement:
+  14           *   LCD top       -> K4 / P3.3
+  15           *   LCD upper     -> K3 / P3.2
+  16           *   LCD lower     -> K2 / P3.0
+  17           *   LCD bottom    -> K1 / P3.1
+  18           *
+  19           * Music and the two song tables are carried over from the standalone player;
+  20           * charts.h selects real non-rest note starts from those same tables so their
+  21           * Perfect moments stay aligned with audible notes.
+  22           */
+  23          
+  24          #include <REGX52.H>
+  25          #include "lcd1602.h"
+  26          #include "keypad.h"
+  27          #include "delay.h"
+  28          #include "music.h"
+  29          #include "charts.h"
+  30          
+  31          #define UI_SELECT       0
+  32          #define UI_GAME         1
+  33          #define UI_RESULT       2
+  34          
+  35          #define LCD_CELLS       16
+  36          #define LCD_PIXEL_W     80
+  37          #define JUDGE_X         57
+  38          #define NOTE_WIDTH      3
+  39          #define TRAVEL_TICKS       480U   /* 480 * 4 ms = 1.92 s */
+  40          #define MISS_AFTER_TICKS    90U   /* 360 ms */
+  41          #define FRAME_TICKS           4U  /* 16 ms */
+  42          #define INPUT_STABLE_TICKS    4U  /* 16 ms; also rejects most IR bursts */
+  43          #define HIT_FLASH_TICKS      24U  /* 96 ms; six visible 16-ms frames */
+  44          
+  45          /* CGRAM slot 1 and 2 are the two independent judgement-line cells.  Slots
+  46           * 0 and 3..7 are allocated to cells containing moving note pixels for this
+  47           * frame.  0xFF in cell_code means that a cell has not been allocated yet. */
+  48          #define LINE_SLOT_TOP   1
+  49          #define LINE_SLOT_BOTTOM 2
+  50          #define NOTE_SLOT_FIRST 3
+  51          #define NOTE_SLOT_LAST  7
+  52          
+  53          static unsigned char ui;
+  54          static unsigned char sel;
+  55          
+C51 COMPILER V9.60.7.0   MAIN                                                              09/30/2026 13:15:47 PAGE 2   
+
+  56          static ChartNote code *game_chart;
+  57          static unsigned int chart_count;
+  58          static unsigned char idata note_done[(CHART_MAX_COUNT + 7) / 8];
+  59          static unsigned int perfect_hits;
+  60          static unsigned int great_hits;
+  61          static unsigned long final_score;
+  62          
+  63          /* Pixel renderer buffers.  8 * 8 bytes are the seven dynamic CGRAM glyphs
+  64           * plus an unused slot zero; cell_code stores a CGRAM code or zero for blank. */
+  65          /* The STC89C52RC has 256 bytes of indirect internal RAM.  Keep the dynamic
+  66           * 64-byte glyph table there so the ordinary DATA area still leaves room for
+  67           * the call stack and C51's temporary values. */
+  68          static unsigned char idata glyph[8][8];
+  69          static unsigned char idata cell_code[32];
+  70          static unsigned int idata lcd_glyph_hash[8];
+  71          /* Two 4-bit screen tags per byte: 0=space, 1..8=CGRAM 0..7,
+  72           * 9='P', 10='G'.  The LCD shadow therefore costs 16 bytes instead of 32. */
+  73          static unsigned char idata lcd_cell[16];
+  74          static unsigned char next_glyph;
+  75          
+  76          /* Input stability timestamp; unlike Key_Scan this keeps all four independent
+  77           * keys available at the same time for legal two-note chords. */
+  78          static unsigned char input_raw;
+  79          static unsigned char input_stable;
+  80          static unsigned int input_age;
+  81          static unsigned int input_last_tick;
+  82          static unsigned int last_frame_tick;
+  83          static unsigned char hit_flash[4];
+  84          static unsigned char hit_quality[4];
+  85          static unsigned char feedback_timer;
+  86          static unsigned char feedback_char;
+  87          
+  88          static unsigned char code RATING_D[]   = "D";
+  89          static unsigned char code RATING_C[]   = "C";
+  90          static unsigned char code RATING_B[]   = "B";
+  91          static unsigned char code RATING_A[]   = "A";
+  92          static unsigned char code RATING_S[]   = "S";
+  93          static unsigned char code RATING_V[]   = "V";
+  94          static unsigned char code RATING_PHI[] = "Phi";
+  95          
+  96          
+  97          /* ---- small display helpers --------------------------------------------- */
+  98          
+  99          static void LCD_ClearLine(unsigned char line)
+ 100          {
+ 101   1          LCD1602_ShowString(line, 1, "                ");
+ 102   1      }
+ 103          
+ 104          static void LCD_ShowNumber(unsigned char line, unsigned char column,
+ 105                                     unsigned long value)
+ 106          {
+ 107   1          unsigned char digits[10];
+ 108   1          unsigned char count = 0;
+ 109   1      
+ 110   1          do
+ 111   1          {
+ 112   2              digits[count++] = (unsigned char)('0' + (value % 10UL));
+ 113   2              value /= 10UL;
+ 114   2          } while (value != 0 && count < 10);
+ 115   1      
+ 116   1          while (count != 0)
+ 117   1          {
+C51 COMPILER V9.60.7.0   MAIN                                                              09/30/2026 13:15:47 PAGE 3   
+
+ 118   2              LCD1602_ShowChar(line, column++, digits[--count]);
+ 119   2          }
+ 120   1      }
+ 121          
+ 122          static unsigned char code *Rating_Name(unsigned long score)
+ 123          {
+ 124   1          if (score >= 1000000UL) return RATING_PHI;
+ 125   1          if (score >= 920000UL)  return RATING_V;
+ 126   1          if (score >= 880000UL)  return RATING_S;
+ 127   1          if (score >= 800000UL)  return RATING_A;
+ 128   1          if (score >= 700000UL)  return RATING_B;
+ 129   1          if (score >= 600000UL)  return RATING_C;
+ 130   1          return RATING_D;
+ 131   1      }
+ 132          
+ 133          static void Draw_Select(void)
+ 134          {
+ 135   1          LCD_ClearLine(1);
+ 136   1          LCD1602_ShowChar(1, 1, (unsigned char)('1' + sel));
+ 137   1          LCD1602_ShowChar(1, 2, ' ');
+ 138   1          LCD1602_ShowString(1, 3, Music_Name(sel));
+ 139   1      
+ 140   1          LCD_ClearLine(2);
+ 141   1          LCD1602_ShowChar(2, 1, (unsigned char)('1' + sel));
+ 142   1          LCD1602_ShowChar(2, 2, '/');
+ 143   1          LCD1602_ShowChar(2, 3, '2');
+ 144   1          LCD1602_ShowString(2, 5, "K1/K3 K2:GO");
+ 145   1      }
+ 146          
+ 147          static void Draw_Result(void)
+ 148          {
+ 149   1          LCD_ClearLine(1);
+ 150   1          LCD1602_ShowString(1, 1, "SCORE ");
+ 151   1          LCD_ShowNumber(1, 7, final_score);
+ 152   1      
+ 153   1          LCD_ClearLine(2);
+ 154   1          LCD1602_ShowString(2, 1, Music_Name(sel));
+ 155   1          LCD1602_ShowChar(2, 10, ' ');
+ 156   1          LCD1602_ShowString(2, 11, Rating_Name(final_score));
+ 157   1      }
+ 158          
+ 159          
+ 160          /* ---- chart status and score -------------------------------------------- */
+ 161          
+ 162          static unsigned char Note_Is_Done(unsigned int index)
+ 163          {
+ 164   1          return (unsigned char)((note_done[index >> 3] >> (index & 7)) & 0x01);
+ 165   1      }
+ 166          
+ 167          static void Note_Mark_Done(unsigned int index)
+ 168          {
+ 169   1          note_done[index >> 3] |= (unsigned char)(1 << (index & 7));
+ 170   1      }
+ 171          
+ 172          static unsigned int Note_TargetTick(unsigned int index)
+ 173          {
+ 174   1          unsigned int units = game_chart[index].at;
+ 175   1          unsigned char unit = Music_UnitMs();
+ 176   1      
+ 177   1          /* Divide the unit duration before multiplying.  This keeps the complete
+ 178   1           * song clock inside 16 bits while retaining a 4 ms timing resolution. */
+ 179   1          return (unsigned int)(units * (unsigned int)(unit / 4)
+C51 COMPILER V9.60.7.0   MAIN                                                              09/30/2026 13:15:47 PAGE 4   
+
+ 180   1                 + (units * (unsigned int)(unit % 4)) / 4);
+ 181   1      }
+ 182          
+ 183          /* The denominator stays below 100 * 109, so splitting 1,000,000 into a
+ 184           * quotient and remainder avoids a 32-bit overflow while preserving exact
+ 185           * AllPerfect = 1,000,000 and ordinary integer rounding for every other run. */
+ 186          static unsigned long Calculate_Score(void)
+ 187          {
+ 188   1          unsigned long weighted;
+ 189   1          unsigned long denominator;
+ 190   1          unsigned long whole;
+ 191   1          unsigned long remainder;
+ 192   1      
+ 193   1          weighted = (unsigned long)perfect_hits * 100UL;
+ 194   1          weighted += (unsigned long)great_hits * 60UL;
+ 195   1          denominator = (unsigned long)chart_count * 100UL;
+ 196   1      
+ 197   1          whole = 1000000UL / denominator;
+ 198   1          remainder = 1000000UL % denominator;
+ 199   1          return weighted * whole
+ 200   1               + (weighted * remainder + denominator / 2UL) / denominator;
+ 201   1      }
+ 202          
+ 203          
+ 204          /* ---- pixel renderer ----------------------------------------------------- */
+ 205          
+ 206          static unsigned char Dot_Mask(unsigned int x)
+ 207          {
+ 208   1          /* CGRAM bit 4 is the leftmost dot of the 5-dot character cell. */
+ 209   1          return (unsigned char)(0x10 >> (x % 5));
+ 210   1      }
+ 211          
+ 212          static unsigned char Graphics_Slot(unsigned char cell)
+ 213          {
+ 214   1          if (cell == 11) return LINE_SLOT_TOP;
+ 215   1          if (cell == 27) return LINE_SLOT_BOTTOM;
+ 216   1      
+ 217   1          if (cell_code[cell] != 0xFF) return cell_code[cell];
+ 218   1      
+ 219   1          if (next_glyph <= NOTE_SLOT_LAST)
+ 220   1          {
+ 221   2              cell_code[cell] = next_glyph;
+ 222   2              return next_glyph++;
+ 223   2          }
+ 224   1          if (next_glyph == (unsigned char)(NOTE_SLOT_LAST + 1))
+ 225   1          {
+ 226   2              next_glyph = (unsigned char)(NOTE_SLOT_LAST + 2);
+ 227   2              cell_code[cell] = 0;          /* CGRAM slot zero */
+ 228   2              return 0;
+ 229   2          }
+ 230   1      
+ 231   1          return 0xFF;                       /* chart spacing should avoid this */
+ 232   1      }
+ 233          
+ 234          static void Graphics_Reset(void)
+ 235          {
+ 236   1          unsigned char slot;
+ 237   1          unsigned char row;
+ 238   1          unsigned char cell;
+ 239   1          unsigned char i;
+ 240   1      
+ 241   1          for (slot = 0; slot < 8; slot++)
+C51 COMPILER V9.60.7.0   MAIN                                                              09/30/2026 13:15:47 PAGE 5   
+
+ 242   1          {
+ 243   2              for (row = 0; row < 8; row++) glyph[slot][row] = 0;
+ 244   2          }
+ 245   1          for (cell = 0; cell < 32; cell++) cell_code[cell] = 0xFF;
+ 246   1      
+ 247   1          /* One-pixel judgement line at the centre of column 12 on both LCD rows. */
+ 248   1          cell_code[11] = LINE_SLOT_TOP;
+ 249   1          cell_code[27] = LINE_SLOT_BOTTOM;
+ 250   1          for (row = 0; row < 8; row++)
+ 251   1          {
+ 252   2              glyph[LINE_SLOT_TOP][row] = 0x10;
+ 253   2              glyph[LINE_SLOT_BOTTOM][row] = 0x10;
+ 254   2          }
+ 255   1      
+ 256   1          /* A hit flashes the complete 5x4 area at the judgement line.  Perfect is
+ 257   1           * a solid bar; Great is a broken bar so the two results are distinguishable
+ 258   1           * even without adding text to the four-lane playfield. */
+ 259   1          for (row = 0; row < 4; row++)
+ 260   1          {
+ 261   2              if (hit_flash[row] != 0)
+ 262   2              {
+ 263   3                  slot = (unsigned char)((row < 2) ? LINE_SLOT_TOP : LINE_SLOT_BOTTOM);
+ 264   3                  cell = (unsigned char)(((row == 0) || (row == 2)) ? 0 : 4);
+ 265   3                  for (i = 0; i < 4; i++)
+ 266   3                  {
+ 267   4                      glyph[slot][cell + i] =
+ 268   4                          (unsigned char)((hit_quality[row] == 2) ? 0x1F : 0x15);
+ 269   4                  }
+ 270   3              }
+ 271   2          }
+ 272   1          /* Columns 1..14 are reserved for the playfield.  The rightmost cell of
+ 273   1           * the lower LCD row is therefore a stable, readable hit indicator. */
+ 274   1          if (feedback_timer != 0) cell_code[31] = feedback_char;
+ 275   1          next_glyph = NOTE_SLOT_FIRST;
+ 276   1      }
+ 277          
+ 278          static void Graphics_Invalidate(void)
+ 279          {
+ 280   1          unsigned char slot;
+ 281   1          unsigned char cell;
+ 282   1      
+ 283   1          for (slot = 0; slot < 8; slot++) lcd_glyph_hash[slot] = 0xFFFF;
+ 284   1          for (cell = 0; cell < 16; cell++) lcd_cell[cell] = 0xFF;
+ 285   1      }
+ 286          
+ 287          static unsigned char Cell_Tag(unsigned char value)
+ 288          {
+ 289   1          if (value == ' ') return 0;
+ 290   1          if (value == 'P') return 9;
+ 291   1          if (value == 'G') return 10;
+ 292   1          return (unsigned char)(value + 1);
+ 293   1      }
+ 294          
+ 295          static unsigned int Note_X(unsigned int now, unsigned int target)
+ 296          {
+ 297   1          unsigned int elapsed = (unsigned int)(now + TRAVEL_TICKS - target);
+ 298   1      
+ 299   1          return (unsigned int)((elapsed * JUDGE_X) / TRAVEL_TICKS);
+ 300   1      }
+ 301          
+ 302          static void Graphics_Add_Note(unsigned char row, unsigned int x)
+ 303          {
+C51 COMPILER V9.60.7.0   MAIN                                                              09/30/2026 13:15:47 PAGE 6   
+
+ 304   1          unsigned char lane_y;
+ 305   1          unsigned char line;
+ 306   1          unsigned char cell;
+ 307   1          unsigned char slot;
+ 308   1          unsigned char pixel;
+ 309   1          unsigned char i;
+ 310   1      
+ 311   1          line = (unsigned char)((row < 2) ? 0 : 1);
+ 312   1          lane_y = (unsigned char)(((row == 0) || (row == 2)) ? 0 : 4);
+ 313   1      
+ 314   1          for (i = 0; i < NOTE_WIDTH; i++)
+ 315   1          {
+ 316   2              pixel = (unsigned char)(x + i);
+ 317   2              if (pixel >= LCD_PIXEL_W) continue;
+ 318   2      
+ 319   2              cell = (unsigned char)(line * LCD_CELLS + pixel / 5);
+ 320   2              slot = Graphics_Slot(cell);
+ 321   2              if (slot == 0xFF) continue;    /* chart spacing keeps this rare */
+ 322   2              glyph[slot][lane_y + 0] |= Dot_Mask(pixel);
+ 323   2              glyph[slot][lane_y + 1] |= Dot_Mask(pixel);
+ 324   2              glyph[slot][lane_y + 2] |= Dot_Mask(pixel);
+ 325   2              glyph[slot][lane_y + 3] |= Dot_Mask(pixel);
+ 326   2          }
+ 327   1      }
+ 328          
+ 329          static void Game_Render(unsigned int now)
+ 330          {
+ 331   1          unsigned int i;
+ 332   1          unsigned int target;
+ 333   1          unsigned int x;
+ 334   1          unsigned char slot;
+ 335   1          unsigned char row;
+ 336   1          unsigned int hash;
+ 337   1          unsigned char value;
+ 338   1          unsigned char tag;
+ 339   1          unsigned char old_tag;
+ 340   1          unsigned char packed;
+ 341   1          unsigned char need_display;
+ 342   1      
+ 343   1          Graphics_Reset();
+ 344   1          for (i = 0; i < chart_count; i++)
+ 345   1          {
+ 346   2              if (Note_Is_Done(i)) continue;
+ 347   2              target = Note_TargetTick(i);
+ 348   2              if (now + TRAVEL_TICKS < target) continue;
+ 349   2              if (now > target + MISS_AFTER_TICKS) continue;
+ 350   2      
+ 351   2              x = Note_X(now, target);
+ 352   2              Graphics_Add_Note(game_chart[i].row, x);
+ 353   2          }
+ 354   1      
+ 355   1          if (next_glyph > 8) next_glyph = 8;
+ 356   1      
+ 357   1          /* If the integer-pixel image did not change, leave the LCD and Timer 0
+ 358   1           * completely alone.  The 16-ms scheduler can therefore run without
+ 359   1           * introducing a periodic audible mute. */
+ 360   1          need_display = 0;
+ 361   1          for (slot = 0; slot < next_glyph; slot++)
+ 362   1          {
+ 363   2              hash = 0;
+ 364   2              for (row = 0; row < 8; row++)
+ 365   2              {
+C51 COMPILER V9.60.7.0   MAIN                                                              09/30/2026 13:15:47 PAGE 7   
+
+ 366   3                  hash = (unsigned int)((hash << 1) ^ glyph[slot][row] ^ 0x009D);
+ 367   3              }
+ 368   2              if (hash != lcd_glyph_hash[slot]) need_display = 1;
+ 369   2          }
+ 370   1          for (i = 0; i < 32; i++)
+ 371   1          {
+ 372   2              value = (cell_code[i] != 0xFF) ? cell_code[i] : ' ';
+ 373   2              tag = Cell_Tag(value);
+ 374   2              packed = lcd_cell[i >> 1];
+ 375   2              old_tag = (unsigned char)((i & 1) ? (packed >> 4) : (packed & 0x0F));
+ 376   2              if (old_tag != tag) need_display = 1;
+ 377   2          }
+ 378   1          if (!need_display) return;
+ 379   1      
+ 380   1          Music_DisplayBegin();
+ 381   1          for (slot = 0; slot < next_glyph; slot++)
+ 382   1          {
+ 383   2              hash = 0;
+ 384   2              for (row = 0; row < 8; row++)
+ 385   2              {
+ 386   3                  hash = (unsigned int)((hash << 1) ^ glyph[slot][row] ^ 0x009D);
+ 387   3              }
+ 388   2              if (hash != lcd_glyph_hash[slot])
+ 389   2              {
+ 390   3                  LCD1602_LoadCharRam(slot, glyph[slot]);
+ 391   3                  lcd_glyph_hash[slot] = hash;
+ 392   3              }
+ 393   2          }
+ 394   1      
+ 395   1          for (i = 0; i < 32; i++)
+ 396   1          {
+ 397   2              value = (cell_code[i] != 0xFF) ? cell_code[i] : ' ';
+ 398   2              tag = Cell_Tag(value);
+ 399   2              packed = lcd_cell[i >> 1];
+ 400   2              old_tag = (unsigned char)((i & 1) ? (packed >> 4) : (packed & 0x0F));
+ 401   2              if (old_tag == tag) continue;
+ 402   2              LCD1602_SetCursor((unsigned char)((i < 16) ? 1 : 2),
+ 403   2                                (unsigned char)((i & 0x0F) + 1));
+ 404   2              LCD1602_WriteData(value);
+ 405   2              if (i & 1) lcd_cell[i >> 1] = (unsigned char)((packed & 0x0F) | (tag << 4));
+ 406   2              else       lcd_cell[i >> 1] = (unsigned char)((packed & 0xF0) | tag);
+ 407   2          }
+ 408   1          Music_DisplayEnd();
+ 409   1      }
+ 410          
+ 411          
+ 412          /* ---- input and judgement ----------------------------------------------- */
+ 413          
+ 414          static void Try_Hit(unsigned char row, unsigned int now)
+ 415          {
+ 416   1          unsigned int i;
+ 417   1          unsigned int best = CHART_MAX_COUNT;
+ 418   1          unsigned int best_diff = 0xFFFF;
+ 419   1          unsigned int x;
+ 420   1          unsigned int diff;
+ 421   1          unsigned char kind = 0;
+ 422   1          unsigned char best_kind = 0;
+ 423   1          unsigned int target;
+ 424   1      
+ 425   1          for (i = 0; i < chart_count; i++)
+ 426   1          {
+ 427   2              if (Note_Is_Done(i) || game_chart[i].row != row) continue;
+C51 COMPILER V9.60.7.0   MAIN                                                              09/30/2026 13:15:47 PAGE 8   
+
+ 428   2      
+ 429   2              target = Note_TargetTick(i);
+ 430   2              if (now + TRAVEL_TICKS < target) continue;
+ 431   2              if (now > target + MISS_AFTER_TICKS)
+ 432   2              {
+ 433   3                  Note_Mark_Done(i);
+ 434   3                  continue;
+ 435   3              }
+ 436   2      
+ 437   2              x = Note_X(now, target);
+ 438   2              if (x >= 55 && x <= 57)
+ 439   2              {
+ 440   3                  diff = (unsigned int)(x > 56 ? x - 56 : 56 - x);
+ 441   3                  kind = 2;                    /* Perfect */
+ 442   3              }
+ 443   2              else if (x == 54 || x == 58)
+ 444   2              {
+ 445   3                  diff = 2;
+ 446   3                  kind = 1;                    /* Great */
+ 447   3              }
+ 448   2              else
+ 449   2              {
+ 450   3                  continue;
+ 451   3              }
+ 452   2      
+ 453   2              if (diff < best_diff)
+ 454   2              {
+ 455   3                  best_diff = diff;
+ 456   3                  best = i;
+ 457   3                  best_kind = kind;
+ 458   3              }
+ 459   2          }
+ 460   1      
+ 461   1          if (best >= chart_count) return;
+ 462   1      
+ 463   1          Note_Mark_Done(best);
+ 464   1          if (best_kind == 2) perfect_hits++;
+ 465   1          else           great_hits++;
+ 466   1          hit_flash[row] = HIT_FLASH_TICKS;
+ 467   1          hit_quality[row] = best_kind;
+ 468   1          feedback_timer = HIT_FLASH_TICKS;
+ 469   1          feedback_char = (unsigned char)((best_kind == 2) ? 'P' : 'G');
+ 470   1          last_frame_tick = (unsigned int)(now - FRAME_TICKS);
+ 471   1      }
+ 472          
+ 473          static void Handle_Pressed(unsigned char pressed, unsigned int now)
+ 474          {
+ 475   1          /* Top-to-bottom lanes are K4, K3, K2, K1, i.e. right-to-left physically. */
+ 476   1          if (pressed & KEY_MASK_STOP) Try_Hit(0, now);
+ 477   1          if (pressed & KEY_MASK_NEXT) Try_Hit(1, now);
+ 478   1          if (pressed & KEY_MASK_MODE) Try_Hit(2, now);
+ 479   1          if (pressed & KEY_MASK_PREV) Try_Hit(3, now);
+ 480   1      }
+ 481          
+ 482          static void Game_Update_Input(unsigned int now)
+ 483          {
+ 484   1          unsigned char row;
+ 485   1          unsigned char raw;
+ 486   1          unsigned char pressed;
+ 487   1      
+ 488   1          if (now == input_last_tick) return;
+ 489   1          input_last_tick = now;
+C51 COMPILER V9.60.7.0   MAIN                                                              09/30/2026 13:15:47 PAGE 9   
+
+ 490   1      
+ 491   1          for (row = 0; row < 4; row++)
+ 492   1          {
+ 493   2              if (hit_flash[row] != 0) hit_flash[row]--;
+ 494   2          }
+ 495   1          if (feedback_timer != 0) feedback_timer--;
+ 496   1      
+ 497   1          raw = Key_ReadMask();
+ 498   1          if (raw != input_raw)
+ 499   1          {
+ 500   2              input_raw = raw;
+ 501   2              /* Store the actual edge time.  Counting foreground-loop passes is
+ 502   2               * unreliable because a full LCD frame can take several milliseconds. */
+ 503   2              input_age = now;
+ 504   2          }
+ 505   1      
+ 506   1          if ((unsigned int)(now - input_age) >= INPUT_STABLE_TICKS
+ 507   1              && raw != input_stable)
+ 508   1          {
+ 509   2              pressed = (unsigned char)(raw & (unsigned char)~input_stable);
+ 510   2              input_stable = raw;
+ 511   2              /* Judge from the edge time, not after the debounce delay. */
+ 512   2              if (pressed != 0)
+ 513   2              {
+ 514   3                  Handle_Pressed(pressed, input_age);
+ 515   3                  /* If the LCD frame delayed the confirmation, also try the
+ 516   3                   * confirmation instant.  Note_Mark_Done makes this idempotent,
+ 517   3                   * while covering the narrow pixel-wide Great window. */
+ 518   3                  if (input_age != now) Handle_Pressed(pressed, now);
+ 519   3              }
+ 520   2          }
+ 521   1      }
+ 522          
+ 523          static void Game_Update_Misses(unsigned int now)
+ 524          {
+ 525   1          unsigned int i;
+ 526   1      
+ 527   1          for (i = 0; i < chart_count; i++)
+ 528   1          {
+ 529   2              if (!Note_Is_Done(i) && now > Note_TargetTick(i) + MISS_AFTER_TICKS)
+ 530   2              {
+ 531   3                  Note_Mark_Done(i);
+ 532   3              }
+ 533   2          }
+ 534   1      }
+ 535          
+ 536          
+ 537          /* ---- game state transitions -------------------------------------------- */
+ 538          
+ 539          static void Game_Begin(void)
+ 540          {
+ 541   1          unsigned int i;
+ 542   1          unsigned char raw;
+ 543   1      
+ 544   1          game_chart  = (sel == 0) ? CHART0 : CHART1;
+ 545   1          chart_count = (sel == 0) ? CHART0_COUNT : CHART1_COUNT;
+ 546   1      
+ 547   1          for (i = 0; i < (CHART_MAX_COUNT + 7) / 8; i++) note_done[i] = 0;
+ 548   1          perfect_hits = 0;
+ 549   1          great_hits   = 0;
+ 550   1          final_score  = 0;
+ 551   1          for (i = 0; i < 4; i++)
+C51 COMPILER V9.60.7.0   MAIN                                                              09/30/2026 13:15:47 PAGE 10  
+
+ 552   1          {
+ 553   2              hit_flash[i] = 0;
+ 554   2              hit_quality[i] = 0;
+ 555   2          }
+ 556   1          feedback_timer = 0;
+ 557   1          feedback_char = ' ';
+ 558   1      
+ 559   1          Music_Load(sel);
+ 560   1          ui = UI_GAME;
+ 561   1      
+ 562   1          /* Draw the empty field and judgement line before the first tone starts. */
+ 563   1          Graphics_Invalidate();
+ 564   1          Graphics_Reset();
+ 565   1          Game_Render(0);
+ 566   1      
+ 567   1          raw = Key_ReadMask();
+ 568   1          input_raw = raw;
+ 569   1          input_stable = raw;                 /* do not reuse the selection press */
+ 570   1          input_age = 0;
+ 571   1          input_last_tick = 0;
+ 572   1          last_frame_tick = 0;
+ 573   1      
+ 574   1          Music_Start();
+ 575   1      }
+ 576          
+ 577          static void Game_Finish(void)
+ 578          {
+ 579   1          unsigned int i;
+ 580   1      
+ 581   1          for (i = 0; i < chart_count; i++)
+ 582   1          {
+ 583   2              if (!Note_Is_Done(i)) Note_Mark_Done(i);
+ 584   2          }
+ 585   1          final_score = Calculate_Score();
+ 586   1          Music_Halt();
+ 587   1          ui = UI_RESULT;
+ 588   1          Draw_Result();
+ 589   1      }
+ 590          
+ 591          static void Handle_Select_Key(unsigned char key)
+ 592          {
+ 593   1          if (key == KEY_PREV)
+ 594   1          {
+ 595   2              if (sel > 0)
+ 596   2              {
+ 597   3                  sel--;
+ 598   3                  Music_Load(sel);
+ 599   3                  Draw_Select();
+ 600   3              }
+ 601   2          }
+ 602   1          else if (key == KEY_NEXT)
+ 603   1          {
+ 604   2              if (sel + 1 < SONG_COUNT)
+ 605   2              {
+ 606   3                  sel++;
+ 607   3                  Music_Load(sel);
+ 608   3                  Draw_Select();
+ 609   3              }
+ 610   2          }
+ 611   1          else if (key == KEY_MODE)
+ 612   1          {
+ 613   2              Game_Begin();
+C51 COMPILER V9.60.7.0   MAIN                                                              09/30/2026 13:15:47 PAGE 11  
+
+ 614   2          }
+ 615   1      }
+ 616          
+ 617          static void Handle_Result_Key(unsigned char key)
+ 618          {
+ 619   1          if (key == KEY_MODE || key == KEY_STOP)
+ 620   1          {
+ 621   2              ui = UI_SELECT;
+ 622   2              Draw_Select();
+ 623   2          }
+ 624   1      }
+ 625          
+ 626          
+ 627          /* ---- main --------------------------------------------------------------- */
+ 628          
+ 629          void main(void)
+ 630          {
+ 631   1          unsigned char key;
+ 632   1          unsigned int now;
+ 633   1      
+ 634   1          Delay_ms(100);
+ 635   1          LCD1602_Init();
+ 636   1          Key_Init();
+ 637   1          Music_Init();
+ 638   1      
+ 639   1          ui  = UI_SELECT;
+ 640   1          sel = 0;
+ 641   1          Music_Load(sel);
+ 642   1          Draw_Select();
+ 643   1      
+ 644   1          while (1)
+ 645   1          {
+ 646   2              if (ui == UI_SELECT)
+ 647   2              {
+ 648   3                  key = Key_Scan();
+ 649   3                  if (key != KEY_NONE) Handle_Select_Key(key);
+ 650   3                  continue;
+ 651   3              }
+ 652   2      
+ 653   2              if (ui == UI_RESULT)
+ 654   2              {
+ 655   3                  key = Key_Scan();
+ 656   3                  if (key != KEY_NONE) Handle_Result_Key(key);
+ 657   3                  continue;
+ 658   3              }
+ 659   2      
+ 660   2              /* Game input is serviced without Key_Scan so two keys can be pressed
+ 661   2               * together and the music timer remains the sole timing reference. */
+ 662   2              /* Timer 1 only advances the clock.  Run the note state machine in the
+ 663   2               * foreground so it never shares the interrupt stack with LCD/input
+ 664   2               * code; Music_Run uses absolute deadlines to preserve the tempo. */
+ 665   2              Music_Run();
+ 666   2              now = Music_ClockTick();
+ 667   2              Game_Update_Input(now);
+ 668   2              Game_Update_Misses(now);
+ 669   2      
+ 670   2              if (Music_State() == MUS_STOP)
+ 671   2              {
+ 672   3                  Game_Finish();
+ 673   3                  continue;
+ 674   3              }
+ 675   2      
+C51 COMPILER V9.60.7.0   MAIN                                                              09/30/2026 13:15:47 PAGE 12  
+
+ 676   2              if (now - last_frame_tick >= FRAME_TICKS)
+ 677   2              {
+ 678   3                  Game_Render(now);
+ 679   3                  last_frame_tick = now;
+ 680   3              }
+ 681   2          }
+ 682   1      }
+
+
+MODULE INFORMATION:   STATIC OVERLAYABLE
+   CODE SIZE        =   2899    ----
+   CONSTANT SIZE    =    628    ----
+   XDATA SIZE       =   ----    ----
+   PDATA SIZE       =   ----    ----
+   DATA SIZE        =     33      83
+   IDATA SIZE       =    141    ----
+   BIT SIZE         =   ----    ----
+END OF MODULE INFORMATION.
+
+
+C51 COMPILATION COMPLETE.  0 WARNING(S),  0 ERROR(S)

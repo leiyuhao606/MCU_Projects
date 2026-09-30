@@ -1,0 +1,115 @@
+C51 COMPILER V9.60.7.0   LCD1602                                                           09/30/2026 09:28:05 PAGE 1   
+
+
+C51 COMPILER V9.60.7.0, COMPILATION OF MODULE LCD1602
+OBJECT MODULE PLACED IN .\Objects\lcd1602.obj
+COMPILER INVOKED BY: D:\Keil5\C51\BIN\C51.EXE lcd1602.c OPTIMIZE(8,SPEED) BROWSE DEBUG OBJECTEXTEND PRINT(.\Listings\lcd
+                    -1602.lst) TABS(2) OBJECT(.\Objects\lcd1602.obj)
+
+line level    source
+
+   1          #include <REGX52.H>
+   2          #include "lcd1602.h"
+   3          #include "delay.h"
+   4          
+   5          /*  LCD1602 wiring on the PuZhong-2/3/4 board, confirmed against the
+   6              schematic ("LCD1602" connector):
+   7          
+   8                  pin 4  RS -> P2.6  (net LCD_RS)
+   9                  pin 5  RW -> P2.5  (net LCD_WR)   <- shared with the buzzer !
+  10                  pin 6  E  -> P2.7  (net LCD_EN)
+  11                  pin 7-14  D0-D7 -> P0 (nets LCD_D0 .. LCD_D7)                   */
+  12          sbit LCD1602_RS = P2^6;
+  13          sbit LCD1602_RW = P2^5;
+  14          sbit LCD1602_E  = P2^7;
+  15          
+  16          #define LCD1602_DATAPORT P0
+  17          
+  18          
+  19          void LCD1602_WriteCommand(unsigned char Command)
+  20          {
+  21   1          LCD1602_RS = 0;
+  22   1          LCD1602_RW = 0;
+  23   1          LCD1602_DATAPORT = Command;
+  24   1          LCD1602_E = 1;
+  25   1          Delay1ms();
+  26   1          LCD1602_E = 0;
+  27   1          Delay1ms();
+  28   1      }
+  29          
+  30          void LCD1602_WriteData(unsigned char Data)
+  31          {
+  32   1          LCD1602_RS = 1;
+  33   1          LCD1602_RW = 0;
+  34   1          LCD1602_DATAPORT = Data;
+  35   1          LCD1602_E = 1;
+  36   1          Delay1ms();
+  37   1          LCD1602_E = 0;
+  38   1          Delay1ms();
+  39   1      }
+  40          
+  41          void LCD1602_Init(void)
+  42          {
+  43   1          LCD1602_WriteCommand(0x38);     /* 8 bit bus, 2 lines, 5x7 dots */
+  44   1          LCD1602_WriteCommand(0x0C);     /* display on, cursor off       */
+  45   1          LCD1602_WriteCommand(0x06);     /* auto increment, no shift     */
+  46   1          LCD1602_WriteCommand(0x01);     /* clear                        */
+  47   1      }
+  48          
+  49          void LCD1602_SetCursor(unsigned char Line, unsigned char Column)
+  50          {
+  51   1          if (Line == 1)
+  52   1          {
+  53   2              LCD1602_WriteCommand(0x80 | (Column - 1));
+  54   2          }
+C51 COMPILER V9.60.7.0   LCD1602                                                           09/30/2026 09:28:05 PAGE 2   
+
+  55   1          else
+  56   1          {
+  57   2              LCD1602_WriteCommand(0x80 | (Column - 1) + 0x40);
+  58   2          }
+  59   1      }
+  60          
+  61          void LCD1602_ShowChar(unsigned char Line, unsigned char Column, unsigned char Char)
+  62          {
+  63   1          LCD1602_SetCursor(Line, Column);
+  64   1          LCD1602_WriteData(Char);
+  65   1      }
+  66          
+  67          void LCD1602_ShowString(unsigned char Line, unsigned char Column, unsigned char code *String)
+  68          {
+  69   1          unsigned char i;
+  70   1      
+  71   1          LCD1602_SetCursor(Line, Column);
+  72   1          for (i = 0; String[i] != '\0'; i++)
+  73   1          {
+  74   2              LCD1602_WriteData(String[i]);
+  75   2          }
+  76   1      }
+  77          
+  78          /*  Copy an 8 byte pattern into one of the eight character generator slots.
+  79              Slot 0..7 is then displayed by sending the byte 0..7 to the display.    */
+  80          void LCD1602_LoadChar(unsigned char Location, unsigned char code *Pattern)
+  81          {
+  82   1          unsigned char i;
+  83   1      
+  84   1          LCD1602_WriteCommand(0x40 | ((Location & 0x07) << 3));
+  85   1          for (i = 0; i < 8; i++)
+  86   1          {
+  87   2              LCD1602_WriteData(Pattern[i]);
+  88   2          }
+  89   1      }
+
+
+MODULE INFORMATION:   STATIC OVERLAYABLE
+   CODE SIZE        =    163    ----
+   CONSTANT SIZE    =   ----    ----
+   XDATA SIZE       =   ----    ----
+   PDATA SIZE       =   ----    ----
+   DATA SIZE        =   ----       8
+   IDATA SIZE       =   ----    ----
+   BIT SIZE         =   ----    ----
+END OF MODULE INFORMATION.
+
+
+C51 COMPILATION COMPLETE.  0 WARNING(S),  0 ERROR(S)

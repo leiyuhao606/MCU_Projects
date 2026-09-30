@@ -1,0 +1,535 @@
+C51 COMPILER V9.60.7.0   MAIN                                                              09/27/2026 12:33:09 PAGE 1   
+
+
+C51 COMPILER V9.60.7.0, COMPILATION OF MODULE MAIN
+OBJECT MODULE PLACED IN .\Objects\main.obj
+COMPILER INVOKED BY: D:\Keil5\C51\BIN\C51.exe main.c OPTIMIZE(8,SPEED) BROWSE DEBUG OBJECTEXTEND PRINT(.\Listings\main.l
+                    -st) TABS(2) OBJECT(.\Objects\main.obj)
+
+line level    source
+
+   1          /* ===========================================================================
+   2             Wordle  -  STC89C52RC + LCD1602 + 4x4 matrix keypad + 3 independent keys
+   3             Keil C51 (uVision 5)
+   4          
+   5             Hardware (PuZhong-2/3/4 board, verified against the schematic PDF):
+   6               LCD1602 : data P0.0-P0.7, RS = P2.6, RW = P2.5, E = P2.7
+   7               Keypad  : 4x4 matrix on P1.0-P1.7  (header J20)
+   8               Keys    : P3.0 = play/history, P3.1 = previous entry, P3.2 = next entry
+   9               Crystal : 11.0592 MHz
+  10          
+  11             Matrix key map (same numbering as the teach_project test project):
+  12               1..13 = letters, 14 = flip letter page, 15 = backspace, 16 = enter
+  13               page A-M : key n -> 'A' + (n-1)
+  14               page N-Z : key n -> 'N' + (n-1)
+  15          
+  16             Screen layout
+  17               line 1  "Wordle" (1-6) | page hint (8-10) | "n/6" (14-16)
+  18               line 2  play, input  : [ ][ ][ ][ ][ ]  [ ]     boxes 1-5, staging box 7
+  19               line 2  play, graded : [word 1-5]   [G/Y/R at 7-11]
+  20               line 2  history      : n (1) | word (3-7) | marks (9-13)
+  21               line 2  game over    : "Congratulation" from column 1 on a win,
+  22                                      "You lose! <answer>" from column 1 on a loss
+  23               line 2  bad word     : "Invalid word" from column 1
+  24             =========================================================================== */
+  25          
+  26          #include <REGX52.H>
+  27          #include "lcd1602.h"
+  28          #include "keypad.h"
+  29          #include "delay.h"
+  30          #include "dict.h"
+  31          
+  32          #define MAX_ROUND   6
+  33          
+  34          /* column positions, 1 based, as used by LCD1602_SetCursor */
+  35          #define COL_HINT     8          /* page hint "A-M" / "N-Z"          */
+  36          #define COL_ROUND   14          /* "n/6"                            */
+  37          #define COL_INPUT    1          /* five input boxes                 */
+  38          #define COL_STAGE    7          /* single staging box               */
+  39          #define COL_MARK     7          /* five G/Y/R marks after grading   */
+  40          #define COL_HIST_W   3          /* word inside the history line     */
+  41          #define COL_HIST_M   9          /* marks inside the history line    */
+  42          
+  43          /* what an empty box looks like */
+  44          #define BOX_EMPTY   '_'
+  45          
+  46          /* set to 0 if you do not want the "A-M"/"N-Z" hint on line 1 */
+  47          #define SHOW_PAGE_HINT  1
+  48          
+  49          /* view */
+  50          #define VIEW_PLAY    0
+  51          #define VIEW_HIST    1
+  52          
+  53          /* state of the current game */
+  54          #define ST_INPUT     0          /* typing a word                        */
+C51 COMPILER V9.60.7.0   MAIN                                                              09/27/2026 12:33:09 PAGE 2   
+
+  55          #define ST_RESULT    1          /* last word graded, waiting for key 16 */
+  56          #define ST_WIN       2
+  57          #define ST_LOSE      3
+  58          #define ST_INVALID   4          /* word is not in the dictionary        */
+  59          
+  60          /* --------------------------------------------------------------------------
+  61             game data
+  62             The arrays live in idata so that the 128 byte direct data area stays free
+  63             for the stack and for the compiler temporaries.
+  64             -------------------------------------------------------------------------- */
+  65          static unsigned char idata guess_word[MAX_ROUND][WORD_LEN];
+  66          static unsigned char idata guess_mark[MAX_ROUND][WORD_LEN];
+  67          static unsigned char idata cur_word[WORD_LEN];      /* word being typed   */
+  68          static unsigned char idata answer[WORD_LEN];        /* the secret word    */
+  69          
+  70          static unsigned char input_len;         /* 0..5 letters in the input boxes  */
+  71          static unsigned char stage_ch;          /* 0 = staging box empty            */
+  72          static unsigned char page;              /* 0 = A-M, 1 = N-Z                 */
+  73          static unsigned char view;              /* VIEW_PLAY / VIEW_HIST            */
+  74          static unsigned char hist_idx;          /* history entry being shown        */
+  75          static unsigned char rounds;            /* number of graded guesses, 0..6   */
+  76          static unsigned char state;             /* ST_xxx                           */
+  77          static unsigned char won;               /* last graded guess was correct    */
+  78          static unsigned char answer_ready;
+  79          
+  80          
+  81          /* ======================= drawing ========================================= */
+  82          
+  83          static void Draw_Page(void)
+  84          {
+  85   1      #if SHOW_PAGE_HINT
+  86   1          LCD1602_ShowChar (1, COL_HINT,     page ? 'N' : 'A');
+  87   1          LCD1602_ShowChar (1, COL_HINT + 1, '-');
+  88   1          LCD1602_ShowChar (1, COL_HINT + 2, page ? 'Z' : 'M');
+  89   1      #endif
+  90   1      }
+  91          
+  92          /* the attempt counter.  While a graded word is on screen it shows the number
+  93             of that word, otherwise it shows the attempt the player is about to make.
+  94             A rejected word does not use up a try, so ST_INVALID counts as "about to". */
+  95          static void Draw_Round(void)
+  96          {
+  97   1          unsigned char r;
+  98   1      
+  99   1          r = (state == ST_RESULT || state == ST_WIN || state == ST_LOSE)
+ 100   1              ? rounds : (unsigned char)(rounds + 1);
+ 101   1          if (r < 1)         r = 1;
+ 102   1          if (r > MAX_ROUND) r = MAX_ROUND;
+ 103   1      
+ 104   1          LCD1602_ShowDigit(1, COL_ROUND,     r);
+ 105   1          LCD1602_ShowChar (1, COL_ROUND + 1, '/');
+ 106   1          LCD1602_ShowDigit(1, COL_ROUND + 2, MAX_ROUND);
+ 107   1      }
+ 108          
+ 109          /* line 1 of the play screen */
+ 110          static void Draw_PlayTop(void)
+ 111          {
+ 112   1          LCD1602_ShowString(1, 1, "Wordle  ");   /* also wipes "History" */
+ 113   1          Draw_Page();
+ 114   1          Draw_Round();
+ 115   1      }
+ 116          
+C51 COMPILER V9.60.7.0   MAIN                                                              09/27/2026 12:33:09 PAGE 3   
+
+ 117          /* the whole of line 2 for the current state, rebuilt from the game data */
+ 118          static void Draw_Line2(void)
+ 119          {
+ 120   1          unsigned char i;
+ 121   1      
+ 122   1          if (state == ST_WIN)
+ 123   1          {
+ 124   2              LCD1602_ShowString(2, 1, "Congratulation  ");
+ 125   2              return;
+ 126   2          }
+ 127   1          if (state == ST_INVALID)
+ 128   1          {
+ 129   2              LCD1602_ShowString(2, 1, "Invalid word    ");
+ 130   2              return;
+ 131   2          }
+ 132   1          if (state == ST_LOSE)
+ 133   1          {
+ 134   2              /*  the game is over, so show the word the player was looking for:
+ 135   2                  "You lose! " fills columns 1..10 and the answer follows it      */
+ 136   2              LCD1602_ShowString(2, 1, "You lose! ");
+ 137   2              for (i = 0; i < WORD_LEN; i++)
+ 138   2              {
+ 139   3                  LCD1602_ShowChar(2, 11 + i, answer[i]);
+ 140   3              }
+ 141   2              LCD1602_ShowChar(2, 16, ' ');
+ 142   2              return;
+ 143   2          }
+ 144   1      
+ 145   1          /* the five input boxes */
+ 146   1          for (i = 0; i < WORD_LEN; i++)
+ 147   1          {
+ 148   2              if (state == ST_RESULT || i < input_len)
+ 149   2              {
+ 150   3                  LCD1602_ShowChar(2, COL_INPUT + i, cur_word[i]);
+ 151   3              }
+ 152   2              else
+ 153   2              {
+ 154   3                  LCD1602_ShowChar(2, COL_INPUT + i, BOX_EMPTY);
+ 155   3              }
+ 156   2          }
+ 157   1          LCD1602_ShowChar(2, COL_INPUT + WORD_LEN, ' ');     /* column 6 */
+ 158   1      
+ 159   1          if (state == ST_RESULT)
+ 160   1          {
+ 161   2              /* the staging box and the four cells after it show the result */
+ 162   2              for (i = 0; i < WORD_LEN; i++)
+ 163   2              {
+ 164   3                  LCD1602_ShowChar(2, COL_MARK + i, guess_mark[rounds - 1][i]);
+ 165   3              }
+ 166   2              /* blank the rest of the line: the history screen writes further
+ 167   2                 right, so those cells must not be left behind */
+ 168   2              for (i = COL_MARK + WORD_LEN; i <= 16; i++)
+ 169   2              {
+ 170   3                  LCD1602_ShowChar(2, i, ' ');
+ 171   3              }
+ 172   2          }
+ 173   1          else
+ 174   1          {
+ 175   2              LCD1602_ShowChar(2, COL_STAGE, stage_ch ? stage_ch : BOX_EMPTY);
+ 176   2              for (i = COL_STAGE + 1; i <= 16; i++)
+ 177   2              {
+ 178   3                  LCD1602_ShowChar(2, i, ' ');
+C51 COMPILER V9.60.7.0   MAIN                                                              09/27/2026 12:33:09 PAGE 4   
+
+ 179   3              }
+ 180   2          }
+ 181   1      }
+ 182          
+ 183          /* the whole of line 2 in history view */
+ 184          static void Draw_History(void)
+ 185          {
+ 186   1          unsigned char i;
+ 187   1      
+ 188   1          LCD1602_ShowString(1, 1, "History");
+ 189   1          LCD1602_ShowString(1, COL_HINT, "      ");      /* wipe the page hint */
+ 190   1      
+ 191   1          if (rounds == 0)
+ 192   1          {
+ 193   2              LCD1602_ShowString(2, 1, "0");
+ 194   2              LCD1602_ShowString(2, 2, "               ");
+ 195   2              return;
+ 196   2          }
+ 197   1      
+ 198   1          LCD1602_ShowDigit(2, 1, (unsigned char)(hist_idx + 1));
+ 199   1          LCD1602_ShowChar (2, 2, ' ');
+ 200   1          for (i = 0; i < WORD_LEN; i++)
+ 201   1          {
+ 202   2              LCD1602_ShowChar(2, COL_HIST_W + i, guess_word[hist_idx][i]);
+ 203   2          }
+ 204   1          LCD1602_ShowChar(2, 8, ' ');
+ 205   1          for (i = 0; i < WORD_LEN; i++)
+ 206   1          {
+ 207   2              LCD1602_ShowChar(2, COL_HIST_M + i, guess_mark[hist_idx][i]);
+ 208   2          }
+ 209   1          LCD1602_ShowString(2, 14, "   ");
+ 210   1      }
+ 211          
+ 212          
+ 213          /* ======================= game logic ====================================== */
+ 214          
+ 215          /*  Draw a random answer from the word pool.
+ 216              Called on the first key press of the game: timer 0 has been running free
+ 217              since power up, so its value depends on how long the player took to touch
+ 218              the keypad - the only real entropy an 8051 has.                        */
+ 219          static void Pick_Answer(void)
+ 220          {
+ 221   1          unsigned int t;
+ 222   1      
+ 223   1          t  = ((unsigned int)TH0 << 8) | (unsigned int)TL0;
+ 224   1          t ^= (unsigned int)(t << 7);        /* spread the timer value out */
+ 225   1          t ^= (unsigned int)(t >> 9);
+ 226   1          t ^= (unsigned int)(t << 8);
+ 227   1      
+ 228   1          Dict_RandomAnswer(answer, t);
+ 229   1          answer_ready = 1;
+ 230   1      }
+ 231          
+ 232          /*  Standard Wordle grading.
+ 233              Pass 1 marks every letter that is in the right place green ('G').
+ 234              Pass 2 walks the remaining positions from left to right and marks a
+ 235              letter yellow ('Y') only while the answer still holds an unused copy of
+ 236              it - that is what makes repeated letters behave correctly.
+ 237              Everything else is red ('R').                                         */
+ 238          static void Evaluate(unsigned char idata *word, unsigned char idata *mark)
+ 239          {
+ 240   1          unsigned char i, j, total, seen;
+C51 COMPILER V9.60.7.0   MAIN                                                              09/27/2026 12:33:09 PAGE 5   
+
+ 241   1      
+ 242   1          for (i = 0; i < WORD_LEN; i++)
+ 243   1          {
+ 244   2              mark[i] = (word[i] == answer[i]) ? 'G' : 'R';
+ 245   2          }
+ 246   1      
+ 247   1          for (i = 0; i < WORD_LEN; i++)
+ 248   1          {
+ 249   2              if (mark[i] == 'G') continue;
+ 250   2      
+ 251   2              /* copies of this letter still available in the answer */
+ 252   2              total = 0;
+ 253   2              for (j = 0; j < WORD_LEN; j++)
+ 254   2              {
+ 255   3                  if (mark[j] != 'G' && answer[j] == word[i]) total++;
+ 256   3              }
+ 257   2              /* copies already spent on yellows in front of position i */
+ 258   2              seen = 0;
+ 259   2              for (j = 0; j < i; j++)
+ 260   2              {
+ 261   3                  if (mark[j] == 'Y' && word[j] == word[i]) seen++;
+ 262   3              }
+ 263   2      
+ 264   2              if (seen < total) mark[i] = 'Y';
+ 265   2          }
+ 266   1      }
+ 267          
+ 268          /* the player pressed key 16 with a full word in the boxes */
+ 269          static void Submit_Guess(void)
+ 270          {
+ 271   1          unsigned char i;
+ 272   1      
+ 273   1          /* a guess only counts when it is a word the dictionary knows */
+ 274   1          if (Dict_Has(cur_word) == 0)
+ 275   1          {
+ 276   2              state = ST_INVALID;
+ 277   2              Draw_Line2();
+ 278   2              return;
+ 279   2          }
+ 280   1      
+ 281   1          for (i = 0; i < WORD_LEN; i++)
+ 282   1          {
+ 283   2              guess_word[rounds][i] = cur_word[i];
+ 284   2          }
+ 285   1          Evaluate(guess_word[rounds], guess_mark[rounds]);
+ 286   1      
+ 287   1          won = 1;
+ 288   1          for (i = 0; i < WORD_LEN; i++)
+ 289   1          {
+ 290   2              if (guess_mark[rounds][i] != 'G')
+ 291   2              {
+ 292   3                  won = 0;
+ 293   3                  break;
+ 294   3              }
+ 295   2          }
+ 296   1      
+ 297   1          rounds++;
+ 298   1          state = ST_RESULT;
+ 299   1          Draw_Round();
+ 300   1          Draw_Line2();
+ 301   1      }
+ 302          
+C51 COMPILER V9.60.7.0   MAIN                                                              09/27/2026 12:33:09 PAGE 6   
+
+ 303          /* the player pressed key 16 while a graded word was on screen */
+ 304          static void Next_Round(void)
+ 305          {
+ 306   1          if (won)
+ 307   1          {
+ 308   2              state = ST_WIN;
+ 309   2              Draw_Line2();
+ 310   2              return;
+ 311   2          }
+ 312   1          if (rounds >= MAX_ROUND)
+ 313   1          {
+ 314   2              state = ST_LOSE;
+ 315   2              Draw_Line2();
+ 316   2              return;
+ 317   2          }
+ 318   1      
+ 319   1          input_len = 0;
+ 320   1          stage_ch  = 0;
+ 321   1          state     = ST_INPUT;
+ 322   1          Draw_Round();
+ 323   1          Draw_Line2();
+ 324   1      }
+ 325          
+ 326          
+ 327          /* ======================= key handling ==================================== */
+ 328          
+ 329          static void Key_Play(unsigned char k)
+ 330          {
+ 331   1          /* keys 1..13 are the letter keys of the current page */
+ 332   1          if (k >= 1 && k <= 13)
+ 333   1          {
+ 334   2              /* a full input box cannot take a new letter, not even into the
+ 335   2                 staging box, but backspace and enter still work */
+ 336   2              if (state == ST_INPUT && input_len < WORD_LEN)
+ 337   2              {
+ 338   3                  stage_ch = (unsigned char)('A' + page * 13 + (k - 1));
+ 339   3                  LCD1602_ShowChar(2, COL_STAGE, stage_ch);
+ 340   3              }
+ 341   2              return;
+ 342   2          }
+ 343   1      
+ 344   1          if (k == KEY_PAGE)
+ 345   1          {
+ 346   2              page = (unsigned char)(!page);
+ 347   2              Draw_Page();
+ 348   2              return;
+ 349   2          }
+ 350   1      
+ 351   1          if (k == KEY_BACK)
+ 352   1          {
+ 353   2              if (state != ST_INPUT) return;
+ 354   2      
+ 355   2              if (stage_ch != 0)
+ 356   2              {
+ 357   3                  stage_ch = 0;                               /* drop staging letter   */
+ 358   3                  LCD1602_ShowChar(2, COL_STAGE, BOX_EMPTY);
+ 359   3              }
+ 360   2              else if (input_len > 0)
+ 361   2              {
+ 362   3                  input_len--;                                /* else rub out last box */
+ 363   3                  LCD1602_ShowChar(2, COL_INPUT + input_len, BOX_EMPTY);
+ 364   3              }
+C51 COMPILER V9.60.7.0   MAIN                                                              09/27/2026 12:33:09 PAGE 7   
+
+ 365   2              return;
+ 366   2          }
+ 367   1      
+ 368   1          if (k == KEY_OK)
+ 369   1          {
+ 370   2              if (state == ST_RESULT)
+ 371   2              {
+ 372   3                  Next_Round();
+ 373   3                  return;
+ 374   3              }
+ 375   2              if (state == ST_INVALID)
+ 376   2              {
+ 377   3                  /* the word was rejected: clear the boxes and let the player type
+ 378   3                     this attempt again - it does not use up one of the six tries */
+ 379   3                  input_len = 0;
+ 380   3                  stage_ch  = 0;
+ 381   3                  state     = ST_INPUT;
+ 382   3                  Draw_Line2();
+ 383   3                  return;
+ 384   3              }
+ 385   2              if (state != ST_INPUT) return;
+ 386   2      
+ 387   2              if (stage_ch != 0)
+ 388   2              {
+ 389   3                  cur_word[input_len] = stage_ch;             /* staging -> input box */
+ 390   3                  LCD1602_ShowChar(2, COL_INPUT + input_len, stage_ch);
+ 391   3                  input_len++;
+ 392   3                  stage_ch = 0;
+ 393   3                  LCD1602_ShowChar(2, COL_STAGE, BOX_EMPTY);
+ 394   3              }
+ 395   2              else if (input_len == WORD_LEN)
+ 396   2              {
+ 397   3                  Submit_Guess();                             /* full word: grade it  */
+ 398   3              }
+ 399   2              return;
+ 400   2          }
+ 401   1      }
+ 402          
+ 403          static void Key_History(unsigned char k)
+ 404          {
+ 405   1          if (k == KEY_PREV)
+ 406   1          {
+ 407   2              if (hist_idx > 0)
+ 408   2              {
+ 409   3                  hist_idx--;
+ 410   3                  Draw_History();
+ 411   3              }
+ 412   2          }
+ 413   1          else if (k == KEY_NEXT)
+ 414   1          {
+ 415   2              if (hist_idx + 1 < rounds)
+ 416   2              {
+ 417   3                  hist_idx++;
+ 418   3                  Draw_History();
+ 419   3              }
+ 420   2          }
+ 421   1      }
+ 422          
+ 423          /* P3.0 switches between the play screen and the history screen */
+ 424          static void Key_Mode(void)
+ 425          {
+ 426   1          if (view == VIEW_PLAY)
+C51 COMPILER V9.60.7.0   MAIN                                                              09/27/2026 12:33:09 PAGE 8   
+
+ 427   1          {
+ 428   2              view     = VIEW_HIST;
+ 429   2              hist_idx = 0;                   /* always start at the first entry */
+ 430   2              Draw_History();
+ 431   2          }
+ 432   1          else
+ 433   1          {
+ 434   2              view = VIEW_PLAY;
+ 435   2              Draw_PlayTop();
+ 436   2              Draw_Line2();
+ 437   2          }
+ 438   1      }
+ 439          
+ 440          
+ 441          /* ======================= main ============================================ */
+ 442          
+ 443          void main(void)
+ 444          {
+ 445   1          unsigned char k;
+ 446   1      
+ 447   1          Key_Init();
+ 448   1      
+ 449   1          /* free running timer 0, used only as a source of randomness */
+ 450   1          TMOD = (TMOD & 0xF0) | 0x01;
+ 451   1          TH0  = 0;
+ 452   1          TL0  = 0;
+ 453   1          TR0  = 1;
+ 454   1      
+ 455   1          input_len    = 0;
+ 456   1          stage_ch     = 0;
+ 457   1          page         = 0;
+ 458   1          view         = VIEW_PLAY;
+ 459   1          hist_idx     = 0;
+ 460   1          rounds       = 0;
+ 461   1          state        = ST_INPUT;
+ 462   1          won          = 0;
+ 463   1          answer_ready = 0;
+ 464   1      
+ 465   1          Delay_ms(100);                  /* let the LCD finish its power on reset */
+ 466   1          LCD1602_Init();
+ 467   1      
+ 468   1          Draw_PlayTop();
+ 469   1          Draw_Line2();
+ 470   1      
+ 471   1          while (1)
+ 472   1          {
+ 473   2              k = Key_Scan();
+ 474   2              if (k == KEY_NONE) continue;
+ 475   2      
+ 476   2              if (answer_ready == 0)
+ 477   2              {
+ 478   3                  Pick_Answer();          /* seeded by the first key press */
+ 479   3              }
+ 480   2      
+ 481   2              if (k == KEY_MODE)
+ 482   2              {
+ 483   3                  Key_Mode();
+ 484   3                  continue;
+ 485   3              }
+ 486   2      
+ 487   2              if (view == VIEW_HIST)
+ 488   2              {
+C51 COMPILER V9.60.7.0   MAIN                                                              09/27/2026 12:33:09 PAGE 9   
+
+ 489   3                  Key_History(k);
+ 490   3                  continue;
+ 491   3              }
+ 492   2      
+ 493   2              Key_Play(k);
+ 494   2          }
+ 495   1      }
+
+
+MODULE INFORMATION:   STATIC OVERLAYABLE
+   CODE SIZE        =   1177    ----
+   CONSTANT SIZE    =     91    ----
+   XDATA SIZE       =   ----    ----
+   PDATA SIZE       =   ----    ----
+   DATA SIZE        =      9       7
+   IDATA SIZE       =     70    ----
+   BIT SIZE         =   ----    ----
+END OF MODULE INFORMATION.
+
+
+C51 COMPILATION COMPLETE.  0 WARNING(S),  0 ERROR(S)

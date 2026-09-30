@@ -1,0 +1,297 @@
+C51 COMPILER V9.60.7.0   MAIN                                                              09/30/2026 09:28:04 PAGE 1   
+
+
+C51 COMPILER V9.60.7.0, COMPILATION OF MODULE MAIN
+OBJECT MODULE PLACED IN .\Objects\main.obj
+COMPILER INVOKED BY: D:\Keil5\C51\BIN\C51.EXE main.c OPTIMIZE(8,SPEED) BROWSE DEBUG OBJECTEXTEND PRINT(.\Listings\main.l
+                    -st) TABS(2) OBJECT(.\Objects\main.obj)
+
+line level    source
+
+   1          /* ===========================================================================
+   2             Music player  -  STC89C52RC (8 KB) + buzzer + LCD1602
+   3             Keil C51 / uVision 5
+   4          
+   5             Two tunes are built in; the melody of each was taken note for note out of
+   6             a MIDI file and lives in songs.h.
+   7          
+   8             Keys (the four independent buttons, active low):
+   9               selection screen   P3.1 / P3.2   previous / next tune
+  10                                  P3.0          play the selected tune
+  11               while playing      P3.0          pause, press again to resume
+  12                                  P3.1          rewind  10 seconds
+  13                                  P3.2          forward 10 seconds
+  14                                  P3.3          stop and go back to the selection
+  15          
+  16               (P3.2 is shared with the board's infrared receiver, so the key scan
+  17                filters pulse trains out - see keypad.c.)
+  18          
+  19             Display
+  20               line 1   <number> <short name>          e.g.  1 MKDR
+  21               line 2   selection screen : <number>/<total>
+  22                        playing          : a progress bar whose leading edge blinks
+  23                                           while the music runs, and stays solid
+  24                                           while it is paused
+  25          
+  26             Hardware note: the buzzer sits on P2.5, which is also the LCD RW line.
+  27             Everything written to the LCD therefore waits until the buzzer is silent
+  28             (Music_BusFree), which keeps the two from interfering.
+  29             =========================================================================== */
+  30          
+  31          #include <REGX52.H>
+  32          #include "lcd1602.h"
+  33          #include "keypad.h"
+  34          #include "delay.h"
+  35          #include "music.h"
+  36          
+  37          #define UI_SELECT   0
+  38          #define UI_PLAY     1
+  39          
+  40          #define BAR_LEN     16
+  41          #define BLINK_MS    300
+  42          
+  43          /*  character generator slot 0: a solid block, the progress bar cell        */
+  44          unsigned char code BLOCK[8] =
+  45          {
+  46              0x1F, 0x1F, 0x1F, 0x1F, 0x1F, 0x1F, 0x1F, 0x1F
+  47          };
+  48          
+  49          static unsigned char ui;            /* UI_SELECT or UI_PLAY               */
+  50          static unsigned char sel;           /* tune highlighted in the selection  */
+  51          static unsigned char blink_on;      /* state of the blinking edge         */
+  52          static unsigned char bar_fill;      /* cells filled when last drawn       */
+  53          
+  54          
+C51 COMPILER V9.60.7.0   MAIN                                                              09/30/2026 09:28:04 PAGE 2   
+
+  55          /* ---- drawing ------------------------------------------------------------ */
+  56          
+  57          static void Draw_Head(void)         /* line 1: number + short name */
+  58          {
+  59   1          LCD1602_ShowString(1, 1, "                ");
+  60   1          LCD1602_ShowChar(1, 1, (unsigned char)('1' + sel));
+  61   1          LCD1602_ShowChar(1, 2, ' ');
+  62   1          LCD1602_ShowString(1, 3, Music_Name(sel));
+  63   1      }
+  64          
+  65          static void Draw_Select(void)       /* line 2: number / total */
+  66          {
+  67   1          LCD1602_ShowString(2, 1, "                ");
+  68   1          LCD1602_ShowChar(2, 1, (unsigned char)('1' + sel));
+  69   1          LCD1602_ShowChar(2, 2, '/');
+  70   1          LCD1602_ShowChar(2, 3, (unsigned char)('0' + SONG_COUNT));
+  71   1      }
+  72          
+  73          /* how many of the 16 cells are full right now */
+  74          static unsigned char Bar_Fill(void)
+  75          {
+  76   1          unsigned int  total = Music_Total();
+  77   1          unsigned char f;
+  78   1      
+  79   1          if (total == 0) return 0;
+  80   1      
+  81   1          f = (unsigned char)(((unsigned int)Music_Pos() * BAR_LEN) / total);
+  82   1          if (f > BAR_LEN) f = BAR_LEN;
+  83   1          return f;
+  84   1      }
+  85          
+  86          static void Draw_Bar(void)          /* the whole progress bar */
+  87          {
+  88   1          unsigned char i;
+  89   1      
+  90   1          bar_fill = Bar_Fill();
+  91   1          for (i = 0; i < BAR_LEN; i++)
+  92   1          {
+  93   2              LCD1602_ShowChar(2, i + 1, (unsigned char)((i < bar_fill) ? 0 : ' '));
+  94   2          }
+  95   1          blink_on = 1;
+  96   1      }
+  97          
+  98          static void Draw_Edge(void)         /* only the leading edge cell */
+  99          {
+ 100   1          unsigned char col = (unsigned char)(bar_fill + 1);
+ 101   1      
+ 102   1          if (col > BAR_LEN) col = BAR_LEN;
+ 103   1          LCD1602_ShowChar(2, col, (unsigned char)(blink_on ? 0 : ' '));
+ 104   1      }
+ 105          
+ 106          
+ 107          /* ---- the blink, driven by the 1 ms tick --------------------------------- */
+ 108          
+ 109          /*  Called from the main loop while the music plays.
+ 110              Writing to the LCD pulls P2.5 low (the LCD RW line) for about 2 ms per
+ 111              character, so every update is kept to ONE character and only done while
+ 112              the buzzer is in the silent part of a note.  Redrawing the whole bar
+ 113              takes 64 ms, which is why the full bar is only ever drawn while the
+ 114              player is stopped (see Handle_Key).                                   */
+ 115          static void Ui_Tick(void)
+ 116          {
+C51 COMPILER V9.60.7.0   MAIN                                                              09/30/2026 09:28:04 PAGE 3   
+
+ 117   1          unsigned char f = Bar_Fill();
+ 118   1      
+ 119   1          if (f > bar_fill)                       /* the bar has grown by a cell */
+ 120   1          {
+ 121   2              if (!Music_BusFree()) return;
+ 122   2              LCD1602_ShowChar(2, bar_fill + 1, 0);
+ 123   2              bar_fill++;
+ 124   2              blink_on = 1;
+ 125   2              return;
+ 126   2          }
+ 127   1      
+ 128   1          if (g_ui_ms == 0 && Music_BusFree())    /* blink the leading edge */
+ 129   1          {
+ 130   2              g_ui_ms  = BLINK_MS;
+ 131   2              blink_on = (unsigned char)(!blink_on);
+ 132   2              Draw_Edge();
+ 133   2          }
+ 134   1      }
+ 135          
+ 136          
+ 137          /* ---- keys --------------------------------------------------------------- */
+ 138          
+ 139          static void Handle_Key(unsigned char k)
+ 140          {
+ 141   1          int           step;
+ 142   1          unsigned char was_playing;
+ 143   1      
+ 144   1          if (ui == UI_SELECT)
+ 145   1          {
+ 146   2              if (k == KEY_PREV)
+ 147   2              {
+ 148   3                  if (sel > 0)
+ 149   3                  {
+ 150   4                      sel--;
+ 151   4                      Music_Load(sel);
+ 152   4                      Draw_Head();
+ 153   4                      Draw_Select();
+ 154   4                  }
+ 155   3              }
+ 156   2              else if (k == KEY_NEXT)
+ 157   2              {
+ 158   3                  if (sel + 1 < SONG_COUNT)
+ 159   3                  {
+ 160   4                      sel++;
+ 161   4                      Music_Load(sel);
+ 162   4                      Draw_Head();
+ 163   4                      Draw_Select();
+ 164   4                  }
+ 165   3              }
+ 166   2              else if (k == KEY_MODE)                 /* play */
+ 167   2              {
+ 168   3                  Music_Load(sel);
+ 169   3                  ui = UI_PLAY;
+ 170   3                  Draw_Head();
+ 171   3                  Draw_Bar();                         /* buzzer still silent here */
+ 172   3                  Music_Start();                      /* ... then start playing   */
+ 173   3              }
+ 174   2              return;
+ 175   2          }
+ 176   1      
+ 177   1          /* ---- playing ---- */
+ 178   1          if (k == KEY_MODE)                          /* pause / resume */
+C51 COMPILER V9.60.7.0   MAIN                                                              09/30/2026 09:28:04 PAGE 4   
+
+ 179   1          {
+ 180   2              if (Music_State() == MUS_PLAY)
+ 181   2              {
+ 182   3                  Music_Pause();
+ 183   3                  blink_on = 1;
+ 184   3                  Draw_Edge();                        /* solid edge while paused */
+ 185   3              }
+ 186   2              else if (Music_State() == MUS_PAUSE)
+ 187   2              {
+ 188   3                  Music_Resume();
+ 189   3              }
+ 190   2              return;
+ 191   2          }
+ 192   1      
+ 193   1          if (k == KEY_PREV || k == KEY_NEXT)         /* +- 10 seconds */
+ 194   1          {
+ 195   2              step = (int)(10000 / (unsigned int)Music_UnitMs());
+ 196   2      
+ 197   2              was_playing = (unsigned char)(Music_State() == MUS_PLAY);
+ 198   2              if (was_playing) Music_Pause();         /* quiet while the bar redraws */
+ 199   2      
+ 200   2              if (k == KEY_PREV) Music_Seek(-step);
+ 201   2              else               Music_Seek(step);
+ 202   2      
+ 203   2              Draw_Bar();
+ 204   2      
+ 205   2              if (was_playing) Music_Resume();
+ 206   2              return;
+ 207   2          }
+ 208   1      
+ 209   1          if (k == KEY_STOP)                          /* back to the selection */
+ 210   1          {
+ 211   2              Music_Halt();
+ 212   2              ui = UI_SELECT;
+ 213   2              Draw_Head();
+ 214   2              Draw_Select();
+ 215   2              return;
+ 216   2          }
+ 217   1      }
+ 218          
+ 219          
+ 220          /* ---- main --------------------------------------------------------------- */
+ 221          
+ 222          void main(void)
+ 223          {
+ 224   1          unsigned char k;
+ 225   1      
+ 226   1          Delay_ms(100);                              /* LCD power on reset */
+ 227   1          LCD1602_Init();
+ 228   1          LCD1602_LoadChar(0, BLOCK);
+ 229   1      
+ 230   1          Key_Init();
+ 231   1          Music_Init();
+ 232   1      
+ 233   1          ui       = UI_SELECT;
+ 234   1          sel      = 0;
+ 235   1          blink_on = 1;
+ 236   1          bar_fill = 0;
+ 237   1      
+ 238   1          Music_Load(sel);
+ 239   1          Draw_Head();
+ 240   1          Draw_Select();
+C51 COMPILER V9.60.7.0   MAIN                                                              09/30/2026 09:28:04 PAGE 5   
+
+ 241   1      
+ 242   1          while (1)
+ 243   1          {
+ 244   2              k = Key_Scan();
+ 245   2              if (k != KEY_NONE)
+ 246   2              {
+ 247   3                  Handle_Key(k);
+ 248   3                  continue;
+ 249   3              }
+ 250   2      
+ 251   2              if (ui != UI_PLAY) continue;
+ 252   2      
+ 253   2              if (Music_State() == MUS_PLAY)
+ 254   2              {
+ 255   3                  Music_Run();
+ 256   3                  Ui_Tick();
+ 257   3              }
+ 258   2              else if (Music_State() == MUS_STOP)     /* the tune ran to its end */
+ 259   2              {
+ 260   3                  ui = UI_SELECT;
+ 261   3                  Draw_Head();
+ 262   3                  Draw_Select();
+ 263   3              }
+ 264   2          }
+ 265   1      }
+
+
+MODULE INFORMATION:   STATIC OVERLAYABLE
+   CODE SIZE        =    585    ----
+   CONSTANT SIZE    =     25    ----
+   XDATA SIZE       =   ----    ----
+   PDATA SIZE       =   ----    ----
+   DATA SIZE        =      4       8
+   IDATA SIZE       =   ----    ----
+   BIT SIZE         =   ----    ----
+END OF MODULE INFORMATION.
+
+
+C51 COMPILATION COMPLETE.  0 WARNING(S),  0 ERROR(S)

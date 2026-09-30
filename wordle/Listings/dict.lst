@@ -1,0 +1,163 @@
+C51 COMPILER V9.60.7.0   DICT                                                              09/27/2026 12:33:09 PAGE 1   
+
+
+C51 COMPILER V9.60.7.0, COMPILATION OF MODULE DICT
+OBJECT MODULE PLACED IN .\Objects\dict.obj
+COMPILER INVOKED BY: D:\Keil5\C51\BIN\C51.exe dict.c OPTIMIZE(8,SPEED) BROWSE DEBUG OBJECTEXTEND PRINT(.\Listings\dict.l
+                    -st) TABS(2) OBJECT(.\Objects\dict.obj)
+
+line level    source
+
+   1          #include <REGX52.H>
+   2          #include "dict.h"
+   3          #include "words.h"
+   4          
+   5          /*  The dictionary is stored as two tables of 24 bit word codes, sorted
+   6              ascending and delta + varint compressed (see words.h).
+   7          
+   8              A table looks like:
+   9                  byte 0..2     the first code, stored absolutely (big endian)
+  10                  then          one varint per following entry: the gap to the
+  11                                previous code, 7 bits per byte, most significant
+  12                                group first, 0x80 set while more bytes follow
+  13          
+  14              This costs about 1.7 bytes per word instead of 5, which is what makes
+  15              a dictionary of several thousand words fit into the 8 KB flash.       */
+  16          
+  17          #define DICT_NO_CODE    0xFFFFFFFFUL
+  18          
+  19          /* 26^4, 26^3, 26^2, 26^1, 26^0 - used to decode a code back to letters
+  20             by repeated subtraction, which avoids pulling in the 32 bit division
+  21             library routine.                                                      */
+  22          static unsigned long code POW26[WORD_LEN] =
+  23          {
+  24              456976UL, 17576UL, 676UL, 26UL, 1UL
+  25          };
+  26          
+  27          
+  28          unsigned long Dict_Code(unsigned char idata *w)
+  29          {
+  30   1          unsigned long c = 0;
+  31   1          unsigned char i;
+  32   1          unsigned int  d;
+  33   1      
+  34   1          for (i = 0; i < WORD_LEN; i++)
+  35   1          {
+  36   2              d = (unsigned int)(w[i] - 'A');
+  37   2              /* c = c * 26 + d.  26 = 2 + 8 + 16, so the multiply is written as
+  38   2                 three shifts and two adds and no multiplication routine is
+  39   2                 needed.  Do NOT add a plain c here - that would give 27*c.  */
+  40   2              c = (c << 1) + (c << 3) + (c << 4) + (unsigned long)d;
+  41   2          }
+  42   1          return c;
+  43   1      }
+  44          
+  45          
+  46          /*  Walk one table.
+  47              by_index = 1 : v is an entry number, the code of that entry is returned
+  48              by_index = 0 : v is a code, the first entry >= v is returned, or
+  49                             DICT_NO_CODE when every entry is smaller.
+  50              Because the entries are sorted this early exit is also what makes a
+  51              failed lookup cheap.                                                  */
+  52          static unsigned long Dict_Walk(unsigned char code *tbl, unsigned int len,
+  53                                         unsigned long v, unsigned char by_index)
+  54          {
+C51 COMPILER V9.60.7.0   DICT                                                              09/27/2026 12:33:09 PAGE 2   
+
+  55   1          unsigned int  i;
+  56   1          unsigned char b;
+  57   1          unsigned long acc, gap;
+  58   1      
+  59   1          /* first entry is stored absolutely */
+  60   1          acc = ((unsigned long)tbl[0] << 16) |
+  61   1                ((unsigned long)tbl[1] << 8)  |
+  62   1                 (unsigned long)tbl[2];
+  63   1          i = 3;
+  64   1      
+  65   1          /* one single decode loop serves both modes, which keeps the code small */
+  66   1          while (i < len)
+  67   1          {
+  68   2              if (by_index)
+  69   2              {
+  70   3                  if (v == 0) break;              /* reached the wanted entry */
+  71   3              }
+  72   2              else
+  73   2              {
+  74   3                  if (acc >= v) break;            /* first entry not smaller than v */
+  75   3              }
+  76   2      
+  77   2              gap = 0;
+  78   2              do
+  79   2              {
+  80   3                  b = tbl[i];
+  81   3                  i++;
+  82   3                  gap = (gap << 7) | (unsigned long)(b & 0x7F);
+  83   3              } while (((b & 0x80) != 0) && (i < len));
+  84   2      
+  85   2              acc += gap;
+  86   2              if (by_index) v--;
+  87   2          }
+  88   1      
+  89   1          if (by_index) return acc;
+  90   1          return (acc >= v) ? acc : DICT_NO_CODE;
+  91   1      }
+  92          
+  93          
+  94          unsigned char Dict_Has(unsigned char idata *w)
+  95          {
+  96   1          unsigned long c = Dict_Code(w);
+  97   1      
+  98   1          if (Dict_Walk(DICT_A, DICT_A_LEN, c, 0) == c) return 1;
+  99   1          if (Dict_Walk(DICT_B, DICT_B_LEN, c, 0) == c) return 1;
+ 100   1          return 0;
+ 101   1      }
+ 102          
+ 103          
+ 104          void Dict_Answer(unsigned char idata *out, unsigned int idx)
+ 105          {
+ 106   1          unsigned long c;
+ 107   1          unsigned long p;
+ 108   1          unsigned char i, n;
+ 109   1      
+ 110   1          c = Dict_Walk(DICT_A, DICT_A_LEN, (unsigned long)idx, 1);
+ 111   1      
+ 112   1          for (i = 0; i < WORD_LEN; i++)
+ 113   1          {
+ 114   2              p = POW26[i];
+ 115   2              n = 0;
+ 116   2              while (c >= p)
+C51 COMPILER V9.60.7.0   DICT                                                              09/27/2026 12:33:09 PAGE 3   
+
+ 117   2              {
+ 118   3                  c -= p;
+ 119   3                  n++;
+ 120   3              }
+ 121   2              out[i] = (unsigned char)('A' + n);
+ 122   2          }
+ 123   1      }
+ 124          
+ 125          
+ 126          void Dict_RandomAnswer(unsigned char idata *out, unsigned int rnd)
+ 127          {
+ 128   1          /* rnd modulo ANSWER_COUNT, written as a subtraction loop so that the
+ 129   1             32 bit division library routine is not needed */
+ 130   1          while (rnd >= ANSWER_COUNT)
+ 131   1          {
+ 132   2              rnd -= ANSWER_COUNT;
+ 133   2          }
+ 134   1          Dict_Answer(out, rnd);
+ 135   1      }
+
+
+MODULE INFORMATION:   STATIC OVERLAYABLE
+   CODE SIZE        =    807    ----
+   CONSTANT SIZE    =   5324    ----
+   XDATA SIZE       =   ----    ----
+   PDATA SIZE       =   ----    ----
+   DATA SIZE        =   ----      41
+   IDATA SIZE       =   ----    ----
+   BIT SIZE         =   ----    ----
+END OF MODULE INFORMATION.
+
+
+C51 COMPILATION COMPLETE.  0 WARNING(S),  0 ERROR(S)

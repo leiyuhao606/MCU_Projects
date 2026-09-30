@@ -1,0 +1,239 @@
+C51 COMPILER V9.60.7.0   KEYPAD                                                            09/27/2026 12:33:09 PAGE 1   
+
+
+C51 COMPILER V9.60.7.0, COMPILATION OF MODULE KEYPAD
+OBJECT MODULE PLACED IN .\Objects\keypad.obj
+COMPILER INVOKED BY: D:\Keil5\C51\BIN\C51.exe keypad.c OPTIMIZE(8,SPEED) BROWSE DEBUG OBJECTEXTEND PRINT(.\Listings\keyp
+                    -ad.lst) TABS(2) OBJECT(.\Objects\keypad.obj)
+
+line level    source
+
+   1          #include <REGX52.H>
+   2          #include "keypad.h"
+   3          #include "delay.h"
+   4          
+   5          /*  4x4 matrix keypad on P1 (schematic header J20, pins 1..8 -> P1.7..P1.0).
+   6              One row is pulled low at a time and the four columns are read:
+   7          
+   8                       P1.7  P1.6  P1.5  P1.4      <- columns
+   9              P1.3  ->   1     5     9    13
+  10              P1.2  ->   2     6    10    14
+  11              P1.1  ->   3     7    11    15
+  12              P1.0  ->   4     8    12    16
+  13                       ^
+  14                       rows (driven low)
+  15          
+  16              Keys 1..13 are the letter keys, 14 = page, 15 = backspace, 16 = enter.  */
+  17          sbit KP_R3 = P1^3;
+  18          sbit KP_R2 = P1^2;
+  19          sbit KP_R1 = P1^1;
+  20          sbit KP_R0 = P1^0;
+  21          
+  22          sbit KP_C3 = P1^7;
+  23          sbit KP_C2 = P1^6;
+  24          sbit KP_C1 = P1^5;
+  25          sbit KP_C0 = P1^4;
+  26          
+  27          /*  Independent keys, active low.  The board has 10K pull-up networks
+  28              (RP7/RP12/RP14 on the schematic), so writing 1 makes them inputs.
+  29          
+  30              !! P3.2 IS SHARED WITH THE INFRARED RECEIVER !!
+  31              On this board the net P32 carries both button K3 and pin 1 (OUT) of the
+  32              HS0038 infrared remote receiver IR1 - see the schematic, block "IR1 /
+  33              HS0038", whose OUT pin is labelled P32.  That receiver pulls its output
+  34              low in bursts whenever it sees modulated infrared light: fluorescent or
+  35              LED room lighting, sunlight, or any IR remote control.  Read as a plain
+  36              level, every burst looks like "next entry" being pressed, which made the
+  37              history screen page through the entries all by itself.
+  38              The history screen was the only place it showed up because in play mode
+  39              the KEY_PREV / KEY_NEXT codes are simply ignored.
+  40          
+  41              Two defences are used here:
+  42                * a key on port 3 is only accepted when its pin stays low WITHOUT A
+  43                  SINGLE TRANSITION for about 30 ms - a push button does that, a pulse
+  44                  train never does, and
+  45                * the pin must then be steadily high again for 20 ms before the key can
+  46                  fire a second time, so even a slow burst cannot produce a stream of
+  47                  events.
+  48              In addition K4 on P3.3 is accepted as a second "next" key.  P3.3 has
+  49              nothing else connected to it, so if the IR receiver ever manages to hold
+  50              P3.2 low solidly, K4 still works perfectly.                          */
+  51          sbit IND_MODE  = P3^0;  /* K2 : switch view            */
+  52          sbit IND_PREV  = P3^1;  /* K1 : previous history entry */
+  53          sbit IND_NEXT  = P3^2;  /* K3 : next history entry (shared with IR1)  */
+  54          sbit IND_NEXT2 = P3^3;  /* K4 : also next history entry (always clean) */
+C51 COMPILER V9.60.7.0   KEYPAD                                                            09/27/2026 12:33:09 PAGE 2   
+
+  55          
+  56          /* remembers the key that is currently held down, so that one press
+  57             produces exactly one event (no auto repeat)                        */
+  58          static unsigned char key_latch = 0;
+  59          
+  60          
+  61          void Key_Init(void)
+  62          {
+  63   1          P1 = 0xFF;
+  64   1          IND_MODE  = 1;
+  65   1          IND_PREV  = 1;
+  66   1          IND_NEXT  = 1;
+  67   1          IND_NEXT2 = 1;
+  68   1          key_latch = 0;
+  69   1      }
+  70          
+  71          /*  Watch one pin for ms milliseconds and report whether it stayed at the
+  72              wanted level the whole time without a single transition.              */
+  73          static unsigned char Pin_Steady(bit pin, bit level, unsigned char ms)
+  74          {
+  75   1          unsigned char i, changes = 0;
+  76   1          bit last = pin;
+  77   1      
+  78   1          for (i = 0; i < ms; i++)
+  79   1          {
+  80   2              Delay1ms();
+  81   2              if (pin != last)
+  82   2              {
+  83   3                  changes++;
+  84   3                  last = pin;
+  85   3              }
+  86   2          }
+  87   1          return (unsigned char)((changes == 0) && (pin == level));
+  88   1      }
+  89          
+  90          /* is this independent key really being held down? */
+  91          static unsigned char Key_Is_Pressed(unsigned char k)
+  92          {
+  93   1          if (k == KEY_MODE) return Pin_Steady(IND_MODE, 0, 30);
+  94   1          if (k == KEY_PREV) return Pin_Steady(IND_PREV, 0, 30);
+  95   1          if (IND_NEXT2 == 0) return Pin_Steady(IND_NEXT2, 0, 30);
+  96   1          return Pin_Steady(IND_NEXT, 0, 30);
+  97   1      }
+  98          
+  99          /*  Has this independent key really been let go of, and stayed let go of?
+ 100              Requiring the pin to be steadily HIGH for 20 ms is what stops a slow
+ 101              burst - say 40 ms low followed by 10 ms high - from re-arming the key
+ 102              and producing one event after another.                                */
+ 103          static unsigned char Key_Is_Free(unsigned char k)
+ 104          {
+ 105   1          if (k == KEY_MODE) return Pin_Steady(IND_MODE, 1, 20);
+ 106   1          if (k == KEY_PREV) return Pin_Steady(IND_PREV, 1, 20);
+ 107   1          if (IND_NEXT2 == 0) return 0;               /* K4 still held down */
+ 108   1          return Pin_Steady(IND_NEXT, 1, 20);
+ 109   1      }
+ 110          
+ 111          /* read the keypad without any debounce: 0 when nothing is pressed */
+ 112          static unsigned char Key_Raw(void)
+ 113          {
+ 114   1          unsigned char k = 0;
+ 115   1      
+ 116   1          /* independent keys first, they are a plain level on P3 */
+C51 COMPILER V9.60.7.0   KEYPAD                                                            09/27/2026 12:33:09 PAGE 3   
+
+ 117   1          if (IND_MODE == 0) return KEY_MODE;
+ 118   1          if (IND_PREV == 0) return KEY_PREV;
+ 119   1          if (IND_NEXT == 0) return KEY_NEXT;     /* K3, shared with the IR receiver */
+ 120   1          if (IND_NEXT2 == 0) return KEY_NEXT;    /* K4, a pin with nothing else on it */
+ 121   1      
+ 122   1          P1 = 0xFF;
+ 123   1          KP_R3 = 0;
+ 124   1          if      (KP_C3 == 0) k = 1;
+ 125   1          else if (KP_C2 == 0) k = 5;
+ 126   1          else if (KP_C1 == 0) k = 9;
+ 127   1          else if (KP_C0 == 0) k = 13;
+ 128   1      
+ 129   1          if (k == 0)
+ 130   1          {
+ 131   2              P1 = 0xFF;
+ 132   2              KP_R2 = 0;
+ 133   2              if      (KP_C3 == 0) k = 2;
+ 134   2              else if (KP_C2 == 0) k = 6;
+ 135   2              else if (KP_C1 == 0) k = 10;
+ 136   2              else if (KP_C0 == 0) k = 14;
+ 137   2          }
+ 138   1          if (k == 0)
+ 139   1          {
+ 140   2              P1 = 0xFF;
+ 141   2              KP_R1 = 0;
+ 142   2              if      (KP_C3 == 0) k = 3;
+ 143   2              else if (KP_C2 == 0) k = 7;
+ 144   2              else if (KP_C1 == 0) k = 11;
+ 145   2              else if (KP_C0 == 0) k = 15;
+ 146   2          }
+ 147   1          if (k == 0)
+ 148   1          {
+ 149   2              P1 = 0xFF;
+ 150   2              KP_R0 = 0;
+ 151   2              if      (KP_C3 == 0) k = 4;
+ 152   2              else if (KP_C2 == 0) k = 8;
+ 153   2              else if (KP_C1 == 0) k = 12;
+ 154   2              else if (KP_C0 == 0) k = 16;
+ 155   2          }
+ 156   1      
+ 157   1          P1 = 0xFF;
+ 158   1          return k;
+ 159   1      }
+ 160          
+ 161          /*  Non blocking scan: returns KEY_NONE when there is no *new* press.
+ 162              A matrix key is accepted after it reads the same twice, 10 ms apart.
+ 163              An independent key needs more than that: its pin must stay low without
+ 164              any transition for 20 ms, and must be steadily high again before it can
+ 165              fire once more.  That is what keeps the infrared receiver on P3.2 from
+ 166              being mistaken for key presses.                                       */
+ 167          unsigned char Key_Scan(void)
+ 168          {
+ 169   1          unsigned char k = Key_Raw();
+ 170   1      
+ 171   1          if (k == 0)
+ 172   1          {
+ 173   2              if (key_latch >= KEY_MODE)
+ 174   2              {
+ 175   3                  /*  independent key: re-arm only when its pin is genuinely idle.
+ 176   3                      While the IR receiver keeps pulsing on P3.2 this never comes
+ 177   3                      true, so one burst cannot produce a stream of events.       */
+ 178   3                  if (Key_Is_Free(key_latch)) key_latch = 0;
+C51 COMPILER V9.60.7.0   KEYPAD                                                            09/27/2026 12:33:09 PAGE 4   
+
+ 179   3              }
+ 180   2              else
+ 181   2              {
+ 182   3                  key_latch = 0;              /* matrix key released - re-arm */
+ 183   3              }
+ 184   2              return KEY_NONE;
+ 185   2          }
+ 186   1      
+ 187   1          if (k == key_latch)
+ 188   1          {
+ 189   2              return KEY_NONE;            /* still the same press */
+ 190   2          }
+ 191   1      
+ 192   1          Delay_ms(10);                   /* let the contact bounce settle */
+ 193   1      
+ 194   1          if (Key_Raw() != k)
+ 195   1          {
+ 196   2              return KEY_NONE;            /* bounced away, ignore it */
+ 197   2          }
+ 198   1      
+ 199   1          if (k >= KEY_MODE)
+ 200   1          {
+ 201   2              if (Key_Is_Pressed(k) == 0)
+ 202   2              {
+ 203   3                  return KEY_NONE;        /* a pulse train, not a button */
+ 204   3              }
+ 205   2          }
+ 206   1      
+ 207   1          key_latch = k;
+ 208   1          return k;
+ 209   1      }
+
+
+MODULE INFORMATION:   STATIC OVERLAYABLE
+   CODE SIZE        =    391    ----
+   CONSTANT SIZE    =   ----    ----
+   XDATA SIZE       =   ----    ----
+   PDATA SIZE       =   ----    ----
+   DATA SIZE        =      1       6
+   IDATA SIZE       =   ----    ----
+   BIT SIZE         =   ----       3
+END OF MODULE INFORMATION.
+
+
+C51 COMPILATION COMPLETE.  0 WARNING(S),  0 ERROR(S)

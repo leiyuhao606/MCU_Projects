@@ -1,0 +1,365 @@
+BL51 BANKED LINKER/LOCATER V6.22.4.0                                                    09/30/2026  13:15:47  PAGE 1
+
+
+BL51 BANKED LINKER/LOCATER V6.22.4.0, INVOKED BY:
+D:\KEIL5\C51\BIN\BL51.EXE OBJECTS\MAIN.OBJ, OBJECTS\MUSIC.OBJ, OBJECTS\KEYPAD.OBJ, OBJECTS\LCD1602.OBJ, OBJECTS\DELAY.OB
+>> J TO OBJECTS\MUSIC_GAME_REDO PRINT (LISTINGS\Music_Game_Redo.m51) RAMSIZE (256)
+
+
+MEMORY MODEL: SMALL
+
+
+INPUT MODULES INCLUDED:
+  OBJECTS\MAIN.OBJ (MAIN)
+  OBJECTS\MUSIC.OBJ (MUSIC)
+  OBJECTS\KEYPAD.OBJ (KEYPAD)
+  OBJECTS\LCD1602.OBJ (LCD1602)
+  OBJECTS\DELAY.OBJ (DELAY)
+  D:\KEIL5\C51\LIB\C51S.LIB (?C_STARTUP)
+  D:\KEIL5\C51\LIB\C51S.LIB (?C?IMUL)
+  D:\KEIL5\C51\LIB\C51S.LIB (?C?UIDIV)
+  D:\KEIL5\C51\LIB\C51S.LIB (?C?LMUL)
+  D:\KEIL5\C51\LIB\C51S.LIB (?C?ULDIV)
+  D:\KEIL5\C51\LIB\C51S.LIB (?C?ULCMP)
+  D:\KEIL5\C51\LIB\C51S.LIB (?C?OFFXADD)
+  D:\KEIL5\C51\LIB\C51S.LIB (?C?LIMUL)
+  D:\KEIL5\C51\LIB\C51S.LIB (?C_INIT)
+
+
+LINK MAP OF MODULE:  OBJECTS\MUSIC_GAME_REDO (MAIN)
+
+
+            TYPE    BASE      LENGTH    RELOCATION   SEGMENT NAME
+            -----------------------------------------------------
+
+            * * * * * * *   D A T A   M E M O R Y   * * * * * * *
+            REG     0000H     0008H     ABSOLUTE     "REG BANK 0"
+            DATA    0008H     0018H     UNIT         _DATA_GROUP_
+            BIT     0020H.0   0000H.3   UNIT         _BIT_GROUP_
+                    0020H.3   0000H.5                *** GAP ***
+            DATA    0021H     0021H     UNIT         ?DT?MAIN
+            DATA    0042H     0015H     UNIT         ?DT?MUSIC
+            DATA    0057H     0001H     UNIT         ?DT?KEYPAD
+            IDATA   0058H     008DH     UNIT         ?ID?MAIN
+            IDATA   00E5H     0001H     UNIT         ?STACK
+
+            * * * * * * *   C O D E   M E M O R Y   * * * * * * *
+            CODE    0000H     0003H     ABSOLUTE     
+            CODE    0003H     0004H     UNIT         ?C_INITSEG
+            CODE    0007H     0003H     UNIT         ?PR?MUSIC_STATE?MUSIC
+                    000AH     0001H                  *** GAP ***
+            CODE    000BH     0003H     ABSOLUTE     
+            CODE    000EH     000DH     UNIT         ?PR?_MUSIC_NAME?MUSIC
+            CODE    001BH     0003H     ABSOLUTE     
+            CODE    001EH     0939H     UNIT         ?CO?MUSIC
+            CODE    0957H     0274H     UNIT         ?CO?MAIN
+            CODE    0BCBH     0234H     UNIT         ?PR?_GAME_RENDER?MAIN
+            CODE    0DFFH     01CEH     UNIT         ?C?LIB_CODE
+            CODE    0FCDH     015EH     UNIT         ?PR?_TRY_HIT?MAIN
+            CODE    112BH     00FEH     UNIT         ?PR?CALCULATE_SCORE?MAIN
+            CODE    1229H     00D0H     UNIT         ?PR?_START_EVENT_AT?MUSIC
+            CODE    12F9H     00AFH     UNIT         ?PR?_RATING_NAME?MAIN
+BL51 BANKED LINKER/LOCATER V6.22.4.0                                                  09/30/2026  13:15:47  PAGE 2
+
+
+            CODE    13A8H     00A3H     UNIT         ?PR?_GRAPHICS_ADD_NOTE?MAIN
+            CODE    144BH     0094H     UNIT         ?PR?GRAPHICS_RESET?MAIN
+            CODE    14DFH     008CH     UNIT         ?C_C51STARTUP
+            CODE    156BH     0089H     UNIT         ?PR?GAME_BEGIN?MAIN
+            CODE    15F4H     0082H     UNIT         ?PR?MAIN?MAIN
+            CODE    1676H     007BH     UNIT         ?PR?_GAME_UPDATE_INPUT?MAIN
+            CODE    16F1H     0072H     UNIT         ?PR?_LCD_SHOWNUMBER?MAIN
+            CODE    1763H     0069H     UNIT         ?PR?MUSIC_RUN?MUSIC
+            CODE    17CCH     0058H     UNIT         ?PR?DRAW_SELECT?MAIN
+            CODE    1824H     0057H     UNIT         ?PR?DRAW_RESULT?MAIN
+            CODE    187BH     0054H     UNIT         ?PR?_NOTE_TARGETTICK?MAIN
+            CODE    18CFH     004FH     UNIT         ?PR?MUSIC_START?MUSIC
+            CODE    191EH     0049H     UNIT         ?PR?_MUSIC_LOAD?MUSIC
+            CODE    1967H     0047H     UNIT         ?PR?_GAME_UPDATE_MISSES?MAIN
+            CODE    19AEH     0042H     UNIT         ?PR?KEY_SCAN?KEYPAD
+            CODE    19F0H     003EH     UNIT         ?PR?TIMER1_ISR?MUSIC
+            CODE    1A2EH     003DH     UNIT         ?PR?_HANDLE_SELECT_KEY?MAIN
+            CODE    1A6BH     003DH     UNIT         ?PR?MUSIC_INIT?MUSIC
+            CODE    1AA8H     0038H     UNIT         ?PR?GAME_FINISH?MAIN
+            CODE    1AE0H     0037H     UNIT         ?PR?_TONE_ON?MUSIC
+            CODE    1B17H     0037H     UNIT         ?PR?PIN_STEADY?KEYPAD
+            CODE    1B4EH     0035H     UNIT         ?PR?_GRAPHICS_SLOT?MAIN
+            CODE    1B83H     0033H     UNIT         ?PR?_HANDLE_PRESSED?MAIN
+            CODE    1BB6H     002AH     UNIT         ?PR?_KEY_IS_PRESSED?KEYPAD
+            CODE    1BE0H     002AH     UNIT         ?PR?_KEY_IS_FREE?KEYPAD
+            CODE    1C0AH     0028H     UNIT         ?PR?LCD1602_INIT?LCD1602
+            CODE    1C32H     0024H     UNIT         ?PR?_NOTE_IS_DONE?MAIN
+            CODE    1C56H     0022H     UNIT         ?PR?_NOTE_MARK_DONE?MAIN
+            CODE    1C78H     0022H     UNIT         ?PR?MUSIC_DISPLAYEND?MUSIC
+            CODE    1C9AH     001FH     UNIT         ?PR?_LCD1602_SHOWSTRING?LCD1602
+            CODE    1CB9H     001DH     UNIT         ?PR?MUSIC_DISPLAYBEGIN?MUSIC
+            CODE    1CD6H     001DH     UNIT         ?PR?_LCD1602_LOADCHARRAM?LCD1602
+            CODE    1CF3H     001BH     UNIT         ?PR?_DOT_MASK?MAIN
+            CODE    1D0EH     001BH     UNIT         ?PR?KEY_RAW?KEYPAD
+            CODE    1D29H     001AH     UNIT         ?PR?_NOTE_X?MAIN
+            CODE    1D43H     0019H     UNIT         ?PR?MUSIC_HALT?MUSIC
+            CODE    1D5CH     0019H     UNIT         ?PR?KEY_READMASK?KEYPAD
+            CODE    1D75H     0016H     UNIT         ?PR?_CELL_TAG?MAIN
+            CODE    1D8BH     0015H     UNIT         ?PR?GRAPHICS_INVALIDATE?MAIN
+            CODE    1DA0H     0013H     UNIT         ?PR?MUSIC_CLOCKTICK?MUSIC
+            CODE    1DB3H     0013H     UNIT         ?PR?MUSIC_TIMEMS?MUSIC
+            CODE    1DC6H     0012H     UNIT         ?PR?_DEADLINE_REACHED?MUSIC
+            CODE    1DD8H     0012H     UNIT         ?PR?LCD1602_SHORTWAIT?LCD1602
+            CODE    1DEAH     0010H     UNIT         ?PR?_LCD1602_SETCURSOR?LCD1602
+            CODE    1DFAH     000FH     UNIT         ?PR?_HANDLE_RESULT_KEY?MAIN
+            CODE    1E09H     000FH     UNIT         ?PR?TONE_OFF?MUSIC
+            CODE    1E18H     000EH     UNIT         ?PR?TIMER0_ISR?MUSIC
+            CODE    1E26H     000EH     UNIT         ?PR?_DELAY_MS?DELAY
+            CODE    1E34H     000CH     UNIT         ?PR?KEY_INIT?KEYPAD
+            CODE    1E40H     000AH     UNIT         ?PR?_LCD1602_WRITECOMMAND?LCD1602
+            CODE    1E4AH     000AH     UNIT         ?PR?_LCD1602_WRITEDATA?LCD1602
+            CODE    1E54H     000AH     UNIT         ?PR?_LCD1602_SHOWCHAR?LCD1602
+            CODE    1E5EH     000AH     UNIT         ?PR?DELAY1MS?DELAY
+            CODE    1E68H     0009H     UNIT         ?PR?_LCD_CLEARLINE?MAIN
+            CODE    1E71H     0003H     UNIT         ?PR?MUSIC_UNITMS?MUSIC
+
+
+BL51 BANKED LINKER/LOCATER V6.22.4.0                                                  09/30/2026  13:15:47  PAGE 3
+
+
+
+OVERLAY MAP OF MODULE:   OBJECTS\MUSIC_GAME_REDO (MAIN)
+
+
+SEGMENT                                      BIT_GROUP          DATA_GROUP 
+  +--> CALLED SEGMENT                     START    LENGTH     START    LENGTH
+-----------------------------------------------------------------------------
+?C_C51STARTUP                             -----    -----      -----    -----
+  +--> ?PR?MAIN?MAIN
+  +--> ?C_INITSEG
+
+?PR?MAIN?MAIN                             -----    -----      0008H    0003H
+  +--> ?PR?_DELAY_MS?DELAY
+  +--> ?PR?LCD1602_INIT?LCD1602
+  +--> ?PR?KEY_INIT?KEYPAD
+  +--> ?PR?MUSIC_INIT?MUSIC
+  +--> ?PR?_MUSIC_LOAD?MUSIC
+  +--> ?PR?DRAW_SELECT?MAIN
+  +--> ?PR?KEY_SCAN?KEYPAD
+  +--> ?PR?_HANDLE_SELECT_KEY?MAIN
+  +--> ?PR?_HANDLE_RESULT_KEY?MAIN
+  +--> ?PR?MUSIC_RUN?MUSIC
+  +--> ?PR?MUSIC_CLOCKTICK?MUSIC
+  +--> ?PR?_GAME_UPDATE_INPUT?MAIN
+  +--> ?PR?_GAME_UPDATE_MISSES?MAIN
+  +--> ?PR?MUSIC_STATE?MUSIC
+  +--> ?PR?GAME_FINISH?MAIN
+  +--> ?PR?_GAME_RENDER?MAIN
+
+?PR?_DELAY_MS?DELAY                       -----    -----      -----    -----
+  +--> ?PR?DELAY1MS?DELAY
+
+?PR?LCD1602_INIT?LCD1602                  -----    -----      -----    -----
+  +--> ?PR?_LCD1602_WRITECOMMAND?LCD1602
+  +--> ?PR?_DELAY_MS?DELAY
+
+?PR?_LCD1602_WRITECOMMAND?LCD1602         -----    -----      -----    -----
+  +--> ?PR?LCD1602_SHORTWAIT?LCD1602
+
+?PR?MUSIC_INIT?MUSIC                      -----    -----      -----    -----
+  +--> ?CO?MUSIC
+  +--> ?PR?_MUSIC_LOAD?MUSIC
+
+?PR?_MUSIC_LOAD?MUSIC                     -----    -----      -----    -----
+  +--> ?CO?MUSIC
+  +--> ?PR?TONE_OFF?MUSIC
+
+?PR?DRAW_SELECT?MAIN                      -----    -----      -----    -----
+  +--> ?PR?_LCD_CLEARLINE?MAIN
+  +--> ?PR?_LCD1602_SHOWCHAR?LCD1602
+  +--> ?PR?_MUSIC_NAME?MUSIC
+  +--> ?PR?_LCD1602_SHOWSTRING?LCD1602
+  +--> ?CO?MAIN
+
+?PR?_LCD_CLEARLINE?MAIN                   -----    -----      -----    -----
+  +--> ?CO?MAIN
+  +--> ?PR?_LCD1602_SHOWSTRING?LCD1602
+BL51 BANKED LINKER/LOCATER V6.22.4.0                                                  09/30/2026  13:15:47  PAGE 4
+
+
+
+?PR?_LCD1602_SHOWSTRING?LCD1602           -----    -----      000CH    0002H
+  +--> ?PR?_LCD1602_SETCURSOR?LCD1602
+  +--> ?PR?_LCD1602_WRITEDATA?LCD1602
+
+?PR?_LCD1602_SETCURSOR?LCD1602            -----    -----      -----    -----
+  +--> ?PR?_LCD1602_WRITECOMMAND?LCD1602
+
+?PR?_LCD1602_WRITEDATA?LCD1602            -----    -----      -----    -----
+  +--> ?PR?LCD1602_SHORTWAIT?LCD1602
+
+?PR?_LCD1602_SHOWCHAR?LCD1602             -----    -----      -----    -----
+  +--> ?PR?_LCD1602_SETCURSOR?LCD1602
+  +--> ?PR?_LCD1602_WRITEDATA?LCD1602
+
+?PR?_MUSIC_NAME?MUSIC                     -----    -----      -----    -----
+  +--> ?CO?MUSIC
+
+?PR?KEY_SCAN?KEYPAD                       -----    -----      000BH    0001H
+  +--> ?PR?KEY_RAW?KEYPAD
+  +--> ?PR?_KEY_IS_FREE?KEYPAD
+  +--> ?PR?_DELAY_MS?DELAY
+  +--> ?PR?_KEY_IS_PRESSED?KEYPAD
+
+?PR?_KEY_IS_FREE?KEYPAD                   -----    -----      000CH    0001H
+  +--> ?PR?PIN_STEADY?KEYPAD
+
+?PR?PIN_STEADY?KEYPAD                     0020H.0  0000H.3    000DH    0003H
+  +--> ?PR?DELAY1MS?DELAY
+
+?PR?_KEY_IS_PRESSED?KEYPAD                -----    -----      000CH    0001H
+  +--> ?PR?PIN_STEADY?KEYPAD
+
+?PR?_HANDLE_SELECT_KEY?MAIN               -----    -----      000BH    0001H
+  +--> ?PR?_MUSIC_LOAD?MUSIC
+  +--> ?PR?DRAW_SELECT?MAIN
+  +--> ?PR?GAME_BEGIN?MAIN
+
+?PR?GAME_BEGIN?MAIN                       -----    -----      -----    -----
+  +--> ?CO?MAIN
+  +--> ?PR?_MUSIC_LOAD?MUSIC
+  +--> ?PR?GRAPHICS_INVALIDATE?MAIN
+  +--> ?PR?GRAPHICS_RESET?MAIN
+  +--> ?PR?_GAME_RENDER?MAIN
+  +--> ?PR?KEY_READMASK?KEYPAD
+  +--> ?PR?MUSIC_START?MUSIC
+
+?PR?_GAME_RENDER?MAIN                     -----    -----      000CH    000CH
+  +--> ?PR?GRAPHICS_RESET?MAIN
+  +--> ?PR?_NOTE_IS_DONE?MAIN
+  +--> ?PR?_NOTE_TARGETTICK?MAIN
+  +--> ?PR?_NOTE_X?MAIN
+  +--> ?PR?_GRAPHICS_ADD_NOTE?MAIN
+  +--> ?PR?_CELL_TAG?MAIN
+  +--> ?PR?MUSIC_DISPLAYBEGIN?MUSIC
+  +--> ?PR?_LCD1602_LOADCHARRAM?LCD1602
+  +--> ?PR?_LCD1602_SETCURSOR?LCD1602
+BL51 BANKED LINKER/LOCATER V6.22.4.0                                                  09/30/2026  13:15:47  PAGE 5
+
+
+  +--> ?PR?_LCD1602_WRITEDATA?LCD1602
+  +--> ?PR?MUSIC_DISPLAYEND?MUSIC
+
+?PR?_NOTE_TARGETTICK?MAIN                 -----    -----      001EH    0002H
+  +--> ?PR?MUSIC_UNITMS?MUSIC
+
+?PR?_GRAPHICS_ADD_NOTE?MAIN               -----    -----      0018H    0005H
+  +--> ?PR?_GRAPHICS_SLOT?MAIN
+  +--> ?PR?_DOT_MASK?MAIN
+
+?PR?_LCD1602_LOADCHARRAM?LCD1602          -----    -----      -----    -----
+  +--> ?PR?_LCD1602_WRITECOMMAND?LCD1602
+  +--> ?PR?_LCD1602_WRITEDATA?LCD1602
+
+?PR?MUSIC_START?MUSIC                     -----    -----      000CH    0001H
+  +--> ?PR?_START_EVENT_AT?MUSIC
+
+?PR?_START_EVENT_AT?MUSIC                 -----    -----      000EH    0002H
+  +--> ?PR?TONE_OFF?MUSIC
+  +--> ?PR?_TONE_ON?MUSIC
+
+?PR?_TONE_ON?MUSIC                        -----    -----      -----    -----
+  +--> ?CO?MUSIC
+
+?PR?_HANDLE_RESULT_KEY?MAIN               -----    -----      -----    -----
+  +--> ?PR?DRAW_SELECT?MAIN
+
+?PR?MUSIC_RUN?MUSIC                       -----    -----      000BH    0003H
+  +--> ?PR?MUSIC_TIMEMS?MUSIC
+  +--> ?PR?_DEADLINE_REACHED?MUSIC
+  +--> ?PR?TONE_OFF?MUSIC
+  +--> ?PR?_START_EVENT_AT?MUSIC
+
+?PR?_GAME_UPDATE_INPUT?MAIN               -----    -----      000BH    0003H
+  +--> ?PR?KEY_READMASK?KEYPAD
+  +--> ?PR?_HANDLE_PRESSED?MAIN
+
+?PR?_HANDLE_PRESSED?MAIN                  -----    -----      000EH    0003H
+  +--> ?PR?_TRY_HIT?MAIN
+
+?PR?_TRY_HIT?MAIN                         -----    -----      0011H    000DH
+  +--> ?PR?_NOTE_IS_DONE?MAIN
+  +--> ?PR?_NOTE_TARGETTICK?MAIN
+  +--> ?PR?_NOTE_MARK_DONE?MAIN
+  +--> ?PR?_NOTE_X?MAIN
+
+?PR?_GAME_UPDATE_MISSES?MAIN              -----    -----      000BH    0004H
+  +--> ?PR?_NOTE_IS_DONE?MAIN
+  +--> ?PR?_NOTE_TARGETTICK?MAIN
+  +--> ?PR?_NOTE_MARK_DONE?MAIN
+
+?PR?GAME_FINISH?MAIN                      -----    -----      -----    -----
+  +--> ?PR?_NOTE_IS_DONE?MAIN
+  +--> ?PR?_NOTE_MARK_DONE?MAIN
+  +--> ?PR?CALCULATE_SCORE?MAIN
+  +--> ?PR?MUSIC_HALT?MUSIC
+  +--> ?PR?DRAW_RESULT?MAIN
+BL51 BANKED LINKER/LOCATER V6.22.4.0                                                  09/30/2026  13:15:47  PAGE 6
+
+
+
+?PR?CALCULATE_SCORE?MAIN                  -----    -----      000BH    0010H
+
+?PR?MUSIC_HALT?MUSIC                      -----    -----      -----    -----
+  +--> ?PR?TONE_OFF?MUSIC
+
+?PR?DRAW_RESULT?MAIN                      -----    -----      -----    -----
+  +--> ?PR?_LCD_CLEARLINE?MAIN
+  +--> ?CO?MAIN
+  +--> ?PR?_LCD1602_SHOWSTRING?LCD1602
+  +--> ?PR?_LCD_SHOWNUMBER?MAIN
+  +--> ?PR?_MUSIC_NAME?MUSIC
+  +--> ?PR?_LCD1602_SHOWCHAR?LCD1602
+  +--> ?PR?_RATING_NAME?MAIN
+
+?PR?_LCD_SHOWNUMBER?MAIN                  -----    -----      000BH    0011H
+  +--> ?PR?_LCD1602_SHOWCHAR?LCD1602
+
+?PR?_RATING_NAME?MAIN                     -----    -----      000BH    0004H
+  +--> ?CO?MAIN
+
+
+
+SYMBOL TABLE OF MODULE:  OBJECTS\MUSIC_GAME_REDO (MAIN)
+
+  VALUE           TYPE          NAME
+  ----------------------------------
+
+  -------         MODULE        ?C?IMUL
+  C:0DFFH         PUBLIC        ?C?IMUL
+  -------         ENDMOD        ?C?IMUL
+
+  -------         MODULE        ?C?UIDIV
+  C:0E11H         PUBLIC        ?C?UIDIV
+  -------         ENDMOD        ?C?UIDIV
+
+  -------         MODULE        ?C?LMUL
+  C:0E66H         PUBLIC        ?C?LMUL
+  -------         ENDMOD        ?C?LMUL
+
+  -------         MODULE        ?C?ULDIV
+  C:0EF1H         PUBLIC        ?C?ULDIV
+  -------         ENDMOD        ?C?ULDIV
+
+  -------         MODULE        ?C?ULCMP
+  C:0F83H         PUBLIC        ?C?ULCMP
+  -------         ENDMOD        ?C?ULCMP
+
+  -------         MODULE        ?C?OFFXADD
+  C:0F94H         PUBLIC        ?C?OFFXADD
+  -------         ENDMOD        ?C?OFFXADD
+
+  -------         MODULE        ?C?LIMUL
+  C:0FA0H         PUBLIC        ?C?LIMUL
+  -------         ENDMOD        ?C?LIMUL
+
+Program Size: data=229.3 xdata=0 code=7795
+BL51 BANKED LINKER/LOCATER V6.22.4.0                                                  09/30/2026  13:15:47  PAGE 7
+
+
+LINK/LOCATE RUN COMPLETE.  0 WARNING(S),  0 ERROR(S)

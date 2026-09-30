@@ -1,0 +1,7 @@
+".\Objects\main.obj",
+".\Objects\music.obj",
+".\Objects\keypad.obj",
+".\Objects\lcd1602.obj",
+".\Objects\delay.obj" 
+TO ".\Objects\Music_player" 
+PRINT(".\Listings\Music_player.m51") RAMSIZE(256) 

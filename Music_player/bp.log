@@ -1,0 +1,6 @@
+Build target 'Target 1'
+linking...
+Program Size: data=43.3 xdata=0 code=5340
+creating hex file from ".\Objects\Music_player"...
+".\Objects\Music_player" - 0 Error(s), 0 Warning(s).
+Build Time Elapsed:  00:00:00

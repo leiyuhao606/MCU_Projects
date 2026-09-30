@@ -1,0 +1,7 @@
+".\Objects\main.obj",
+".\Objects\delay.obj",
+".\Objects\lcd1602.obj",
+".\Objects\keypad.obj",
+".\Objects\dict.obj" 
+TO ".\Objects\wordle" 
+PRINT(".\Listings\wordle.m51") RAMSIZE(256) 
